@@ -1,0 +1,593 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Manpower & Performance Dashboard</title>
+    
+    <!-- External Dependencies (CDN) -->
+    <!-- React 18 & ReactDOM -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <!-- Prop-Types (Required for Recharts UMD) -->
+    <script src="https://unpkg.com/prop-types@15.8.1/prop-types.min.js"></script>
+    <!-- Babel for in-browser JSX transformation -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- Tailwind CSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Recharts 2.12.7 (Stable Version) -->
+    <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+        
+        body {
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            background-color: #f8fafc;
+            color: #1e293b;
+        }
+
+        /* Utility for hiding scrollbars */
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+        /* Smooth Entry Animation */
+        .animate-in {
+            animation: fadeIn 0.4s ease-out forwards;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(8px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .custom-shadow {
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.04), 0 4px 6px -2px rgba(0, 0, 0, 0.01);
+        }
+
+        /* Lucide icon alignment fix */
+        .lucide {
+            vertical-align: middle;
+            stroke-width: 2px;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo, useRef } = React;
+        
+        /**
+         * Reusable Icon Component
+         * Uses Lucide.createIcons to render SVGs in a React-friendly way
+         */
+        const Icon = ({ name, size = 18, className = "" }) => {
+            const spanRef = useRef(null);
+
+            useEffect(() => {
+                if (window.lucide && spanRef.current) {
+                    // Convert CamelCase to kebab-case for Lucide attribute
+                    const kebabName = name.replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase();
+                    spanRef.current.innerHTML = `<i data-lucide="${kebabName}" style="width: ${size}px; height: ${size}px;" class="${className}"></i>`;
+                    window.lucide.createIcons({
+                        nameAttr: 'data-lucide'
+                    });
+                }
+            }, [name, size, className]);
+
+            return <span ref={spanRef} className="inline-flex items-center justify-center leading-none"></span>;
+        };
+
+        // Firebase Setup & Helper
+        const firebaseConfig = window.__firebase_config ? JSON.parse(window.__firebase_config) : {
+            apiKey: "", authDomain: "", projectId: "", storageBucket: "", messagingSenderId: "", appId: ""
+        };
+        const appId = window.__app_id || 'manpower-dashboard-final';
+
+        const loadFirebase = () => {
+            return new Promise((resolve) => {
+                const urls = [
+                    "https://www.gstatic.com/firebasejs/11.0.2/firebase-app-compat.js",
+                    "https://www.gstatic.com/firebasejs/11.0.2/firebase-auth-compat.js",
+                    "https://www.gstatic.com/firebasejs/11.0.2/firebase-firestore-compat.js"
+                ];
+                let loaded = 0;
+                urls.forEach(url => {
+                    const s = document.createElement('script');
+                    s.src = url; s.async = true;
+                    s.onload = () => { if (++loaded === urls.length) resolve(window.firebase); };
+                    document.head.appendChild(s);
+                });
+            });
+        };
+
+        const COLORS_MAP = {
+            'Core Work': '#3b82f6',
+            'Administrative': '#f59e0b',
+            'Meetings': '#10b981',
+            'Ad-Hoc/Interruptions': '#ef4444',
+            'Inefficiencies': '#94a3b8'
+        };
+
+        const ENTITIES = ['CEG', 'Overseas', 'ELFA', 'EQE', 'KIE', 'KLC', 'KT', 'NS', 'TGI'];
+        const CATEGORIES = Object.keys(COLORS_MAP);
+        const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
+        const WEEKLY_CAPACITY = 43.75;
+
+        const App = () => {
+            const { 
+                BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, 
+                ResponsiveContainer, PieChart, Pie, Cell
+            } = window.Recharts || {};
+
+            const [tasks, setTasks] = useState([]);
+            const [user, setUser] = useState(null);
+            const [currentUser] = useState({ name: 'Soong Wang Seng', role: 'HR Manager' });
+            const [activeTab, setActiveTab] = useState('summary');
+            const [isModalOpen, setIsModalOpen] = useState(false);
+            const [saveStatus, setSaveStatus] = useState('idle');
+            const [db, setDb] = useState(null);
+
+            const [orgData, setOrgData] = useState({ totalEmployees: 45, totalManagers: 6 });
+            const [formData, setFormData] = useState({
+                description: '', entity: 'CEG', category: 'Core Work',
+                mon: 0, tue: 0, wed: 0, thu: 0, fri: 0,
+                totalHours: 0, periodName: '', type: 'weekly'
+            });
+
+            // Initialize Firebase and Auth
+            useEffect(() => {
+                loadFirebase().then(firebase => {
+                    firebase.initializeApp(firebaseConfig);
+                    const firestore = firebase.firestore();
+                    const auth = firebase.auth();
+                    setDb(firestore);
+
+                    const initAuth = async () => {
+                        try {
+                            if (window.__initial_auth_token) {
+                                await auth.signInWithCustomToken(window.__initial_auth_token);
+                            } else {
+                                await auth.signInAnonymously();
+                            }
+                        } catch (e) { console.warn("Cloud features available in connected mode."); }
+                    };
+                    initAuth();
+                    auth.onAuthStateChanged(setUser);
+                });
+            }, []);
+
+            // Real-time Cloud Data Sync
+            useEffect(() => {
+                if (!user || !db) return;
+                const ref = db.collection('artifacts').doc(appId).collection('users').doc(user.uid).collection('settings').doc('user_data');
+                
+                const unsubscribe = ref.onSnapshot(doc => {
+                    if (doc.exists) {
+                        const data = doc.data();
+                        if (data.tasks) setTasks(data.tasks);
+                        if (data.orgData) setOrgData(data.orgData);
+                    } else {
+                        setTasks(getInitialMockData());
+                    }
+                }, err => console.error("Sync error:", err));
+                return () => unsubscribe();
+            }, [user, db]);
+
+            const getInitialMockData = () => [
+                { id: '1', type: 'weekly_recurring', description: 'Daily HR Ops & Admin', entity: 'CEG', category: 'Administrative', mon: 1, tue: 1, wed: 1, thu: 1, fri: 1 },
+                { id: '2', type: 'weekly_recurring', description: 'Weekly Team Sync', entity: 'CEG', category: 'Meetings', mon: 1, tue: 0, wed: 0, thu: 0, fri: 0 },
+                { id: '3', type: 'monthly', description: 'Payroll Verification', entity: 'KLC', category: 'Core Work', totalHours: 8, periodName: 'Monthly' }
+            ];
+
+            const handleCloudSave = async () => {
+                if (!user || !db) return;
+                setSaveStatus('saving');
+                try {
+                    const dataRef = db.collection('artifacts').doc(appId).collection('users').doc(user.uid).collection('settings').doc('user_data');
+                    await dataRef.set({
+                        tasks,
+                        orgData,
+                        lastUpdated: new Date().toISOString()
+                    }, { merge: true });
+                    setSaveStatus('saved');
+                    setTimeout(() => setSaveStatus('idle'), 3000);
+                } catch (err) { setSaveStatus('error'); }
+            };
+
+            const analytics = useMemo(() => {
+                const entityStats = {};
+                const catTotals = {};
+                let totalProrated = 0, coreProrated = 0, monthlyProrated = 0;
+
+                ENTITIES.forEach(e => entityStats[e] = { name: e, total: 0, core: 0 });
+
+                tasks.forEach(t => {
+                    let weight = 0;
+                    if (t.type === 'weekly' || t.type === 'weekly_recurring') {
+                        weight = Number(t.mon)+Number(t.tue)+Number(t.wed)+Number(t.thu)+Number(t.fri);
+                    } else if (t.type === 'monthly') {
+                        weight = Number(t.totalHours) / 4;
+                        monthlyProrated += weight;
+                    } else if (t.type === 'yearly') {
+                        weight = Number(t.totalHours) / 52;
+                    }
+
+                    totalProrated += weight;
+                    catTotals[t.category] = (catTotals[t.category] || 0) + weight;
+                    if (entityStats[t.entity]) {
+                        entityStats[t.entity].total += weight;
+                        if (t.category === 'Core Work') {
+                            entityStats[t.entity].core += weight;
+                            coreProrated += weight;
+                        }
+                    }
+                });
+
+                const util = (totalProrated / WEEKLY_CAPACITY) * 100;
+                return {
+                    utilization: util.toFixed(1),
+                    efficiency: totalProrated > 0 ? ((coreProrated / totalProrated) * 100).toFixed(1) : 0,
+                    capacityLeft: Math.max(0, WEEKLY_CAPACITY - totalProrated).toFixed(1),
+                    totalEffort: totalProrated.toFixed(1),
+                    monthlyShare: monthlyProrated.toFixed(1),
+                    entityData: Object.values(entityStats).filter(d => d.total > 0).sort((a,b) => b.total - a.total),
+                    catData: Object.entries(catTotals).map(([name, value]) => ({ name, value })),
+                    health: util > 110 ? 'Critical' : util > 90 ? 'At Limit' : 'Healthy'
+                };
+            }, [tasks]);
+
+            const stats = useMemo(() => {
+                const filtered = tasks.filter(t => t.type === activeTab);
+                const adhoc = tasks.filter(t => t.type === 'weekly');
+                const recurring = tasks.filter(t => t.type === 'weekly_recurring');
+                const combined = activeTab === 'weekly' ? [...adhoc, ...recurring] : filtered;
+                
+                let total = 0, core = 0;
+                combined.forEach(t => {
+                    const weight = (t.type === 'weekly' || t.type === 'weekly_recurring') 
+                        ? Number(t.mon)+Number(t.tue)+Number(t.wed)+Number(t.thu)+Number(t.fri)
+                        : Number(t.totalHours);
+                    total += weight;
+                    if (t.category === 'Core Work') core += weight;
+                });
+                return { total: total.toFixed(1), productivity: total > 0 ? ((core/total)*100).toFixed(1) : 0, adhoc, recurring, filtered };
+            }, [tasks, activeTab]);
+
+            const handleAddTask = (e) => {
+                e.preventDefault();
+                setTasks([...tasks, { ...formData, id: Math.random().toString(36).substr(2, 9), type: formData.type || activeTab }]);
+                setIsModalOpen(false);
+                setFormData({ ...formData, description: '', mon: 0, tue: 0, wed: 0, thu: 0, fri: 0, totalHours: 0 });
+            };
+
+            const deleteTask = (id) => setTasks(tasks.filter(t => t.id !== id));
+
+            if (!BarChart) return <div className="h-screen flex items-center justify-center font-bold text-slate-400">Loading Dashboard Components...</div>;
+
+            return (
+                <div className="min-h-screen p-4 md:p-8 animate-in">
+                    <header className="max-w-7xl mx-auto mb-10 flex flex-col md:flex-row md:items-end justify-between gap-6">
+                        <div>
+                            <div className="flex items-center gap-2 text-blue-600 font-bold text-sm uppercase tracking-widest mb-2">
+                                <Icon name="Activity" size={16} /> Manpower & Performance
+                            </div>
+                            <h1 className="text-4xl font-black text-slate-900 tracking-tight">{currentUser.name}</h1>
+                            <p className="text-slate-500 font-medium mt-1">Strategic Resource Allocation Dashboard</p>
+                        </div>
+                        
+                        <div className="flex flex-wrap items-center gap-3">
+                            <div className="flex bg-white p-1 rounded-2xl border border-slate-200 custom-shadow">
+                                {['weekly', 'monthly', 'yearly', 'summary'].map(tab => (
+                                    <button key={tab} onClick={() => setActiveTab(tab)} className={`px-5 py-2.5 rounded-xl text-xs font-extrabold transition-all capitalize ${activeTab === tab ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:text-slate-600'}`}>
+                                        {tab === 'summary' ? 'Analysis' : tab}
+                                    </button>
+                                ))}
+                            </div>
+                            <button onClick={handleCloudSave} disabled={saveStatus === 'saving'} className={`flex items-center gap-2 px-5 py-2.5 rounded-xl font-bold transition-all border ${saveStatus === 'saving' ? 'bg-slate-100 text-slate-400' : 'bg-white text-slate-700 shadow-sm hover:bg-slate-50'}`}>
+                                <Icon name={saveStatus === 'saving' ? 'Loader2' : 'CloudUpload'} className={saveStatus === 'saving' ? 'animate-spin' : ''} />
+                                {saveStatus === 'saving' ? 'Syncing...' : saveStatus === 'saved' ? 'Synced' : 'Cloud Save'}
+                            </button>
+                            {activeTab !== 'summary' && (
+                                <button onClick={() => setIsModalOpen(true)} className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-6 py-2.5 rounded-xl font-bold transition-all shadow-xl shadow-blue-100">
+                                    <Icon name="Plus" size={18} /> New Entry
+                                </button>
+                            )}
+                        </div>
+                    </header>
+
+                    <main className="max-w-7xl mx-auto">
+                        {activeTab === 'summary' ? (
+                            <div className="space-y-8 animate-in">
+                                <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+                                    <IndicatorCard title="Capacity Health" value={`${analytics.utilization}%`} icon="Gauge" desc={analytics.health} color={analytics.health === 'Healthy' ? 'emerald' : 'orange'} />
+                                    <IndicatorCard title="Strategic Density" value={`${analytics.efficiency}%`} icon="Target" desc="Core Focus Ratio" color="blue" />
+                                    <IndicatorCard title="Available Runway" value={`${analytics.capacityLeft}h`} icon="Clock" desc="Before standard cap" color="emerald" />
+                                    <IndicatorCard title="Avg Effort" value={`${analytics.totalEffort}h`} icon="Users" desc="Across all SBUs" color="slate" />
+                                </div>
+
+                                <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                                    <div className="lg:col-span-2 bg-white p-8 rounded-3xl border border-slate-200 custom-shadow">
+                                        <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-8 flex items-center gap-2"><Icon name="Building2" size={14}/> SBU Resource Distribution</h4>
+                                        <div className="h-[380px]">
+                                            <ResponsiveContainer width="100%" height="100%">
+                                                <BarChart data={analytics.entityData} layout="vertical" margin={{left: 20}}>
+                                                    <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#f1f5f9" />
+                                                    <XAxis type="number" hide />
+                                                    <YAxis dataKey="name" type="category" axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 11, fontWeight: 700}} width={80} />
+                                                    <Tooltip cursor={{fill: '#f8fafc'}} contentStyle={{borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)'}} />
+                                                    <Bar dataKey="total" name="Total Effort (h)" fill="#e2e8f0" radius={[0, 6, 6, 0]} barSize={24} />
+                                                    <Bar dataKey="core" name="Core Effort (h)" fill="#3b82f6" radius={[0, 6, 6, 0]} barSize={24} />
+                                                </BarChart>
+                                            </ResponsiveContainer>
+                                        </div>
+                                    </div>
+                                    <div className="bg-white p-8 rounded-3xl border border-slate-200 custom-shadow flex flex-col">
+                                        <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-8 flex items-center gap-2"><Icon name="PieChart" size={14}/> Work Nature breakdown</h4>
+                                        <div className="h-[260px] mb-6">
+                                            <ResponsiveContainer width="100%" height="100%">
+                                                <PieChart>
+                                                    <Pie data={analytics.catData} innerRadius={70} outerRadius={100} paddingAngle={8} dataKey="value">
+                                                        {analytics.catData.map((e, idx) => <Cell key={idx} fill={COLORS_MAP[e.name]} strokeWidth={0} />)}
+                                                    </Pie>
+                                                    <Tooltip />
+                                                </PieChart>
+                                            </ResponsiveContainer>
+                                        </div>
+                                        <div className="space-y-3 flex-1 overflow-y-auto no-scrollbar">
+                                            {analytics.catData.map(item => (
+                                                <div key={item.name} className="flex justify-between items-center group">
+                                                    <div className="flex items-center gap-2">
+                                                        <div className="w-2.5 h-2.5 rounded-full" style={{backgroundColor: COLORS_MAP[item.name]}}></div>
+                                                        <span className="text-[11px] font-bold text-slate-500 uppercase tracking-tight group-hover:text-slate-900 transition-colors">{item.name}</span>
+                                                    </div>
+                                                    <span className="text-[11px] font-black text-slate-900">{Number(item.value).toFixed(1)}h</span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                                    <div className="bg-white p-8 rounded-3xl border border-slate-200 custom-shadow">
+                                        <div className="flex items-center gap-4 mb-8">
+                                            <div className="p-3 bg-red-50 text-red-600 rounded-2xl"><Icon name="ZapOff" size={20} /></div>
+                                            <div>
+                                                <h4 className="text-sm font-black text-slate-800 uppercase tracking-widest leading-none">Delegation Opportunity</h4>
+                                                <p className="text-xs text-slate-400 font-medium mt-1">Non-core load potentially impacting your strategic runway</p>
+                                            </div>
+                                        </div>
+                                        <div className="space-y-4">
+                                            <DelegationBox label="Administrative Support" hours={analytics.catData.find(c => c.name === 'Administrative')?.value || 0} color="orange" />
+                                            <DelegationBox label="Standard Meetings" hours={analytics.catData.find(c => c.name === 'Meetings')?.value || 0} color="emerald" />
+                                            <DelegationBox label="System Inefficiencies" hours={analytics.catData.find(c => c.name === 'Inefficiencies')?.value || 0} color="slate" />
+                                        </div>
+                                    </div>
+
+                                    {/* Restored Strategic Insight Card */}
+                                    <div className="bg-blue-600 p-8 rounded-3xl text-white custom-shadow relative overflow-hidden flex flex-col justify-center">
+                                        <div className="absolute -right-10 -bottom-10 opacity-10">
+                                            <Icon name="Target" size={240} />
+                                        </div>
+                                        <div className="relative z-10">
+                                            <div className="flex items-center gap-3 mb-6">
+                                                <Icon name="Target" size={24} />
+                                                <h4 className="text-xs font-black uppercase tracking-[0.2em]">Dashboard Insight</h4>
+                                            </div>
+                                            <p className="text-xl font-bold leading-relaxed mb-6">
+                                                {Number(analytics.utilization) > 100 
+                                                    ? `You are currently ${analytics.utilization}% utilized. Your "Hidden Load" from Monthly tasks accounts for ${analytics.monthlyShare}h/week. Consider delegating Administrative tasks to reclaim focused time.`
+                                                    : `Your capacity is healthy at ${analytics.utilization}%. Your Strategic Focus index is at ${analytics.efficiency}%, meaning you are spending most of your time on Core HR value-add activities.`
+                                                }
+                                            </p>
+                                            <button onClick={() => setActiveTab('weekly')} className="bg-white text-blue-600 px-6 py-3 rounded-2xl font-black text-xs uppercase flex items-center gap-2 hover:bg-blue-50 transition-colors shadow-lg">
+                                                Adjust Variable Tasks <Icon name="ArrowUpRight" size={16} />
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        ) : (
+                            <div className="space-y-8 animate-in">
+                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
+                                    <StatCard title={`${activeTab} Load`} value={`${stats.total}h`} icon="Clock" subtitle={`Prorated to ${WEEKLY_CAPACITY}h goal`} />
+                                    <StatCard title="Focus index" value={`${stats.efficiency}%`} icon="Target" subtitle="Strategic core ratio" />
+                                    <StatCard title="Active SBUs" value={[...new Set(stats.filtered.map(t => t.entity))].length} icon="Building2" subtitle="Units receiving effort" />
+                                </div>
+                                
+                                <div className="bg-white rounded-[2.5rem] border border-slate-200 p-8 custom-shadow overflow-hidden">
+                                    {activeTab === 'weekly' ? (
+                                        <div className="space-y-12">
+                                            <TableComponent title="Recurring Base Load" icon="Repeat" tasks={stats.recurring} type="recurring" deleteTask={deleteTask} />
+                                            <TableComponent title="Variable / Ad-Hoc Tasks" icon="CalendarDays" tasks={stats.adhoc} type="variable" deleteTask={deleteTask} />
+                                        </div>
+                                    ) : (
+                                        <div className="overflow-x-auto rounded-2xl border border-slate-100">
+                                            <table className="w-full text-left text-sm">
+                                                <thead className="bg-slate-50 text-[11px] font-black uppercase text-slate-400 border-b">
+                                                    <tr>
+                                                        <th className="px-8 py-5">Task Description</th>
+                                                        <th className="px-4 py-5">Entity</th>
+                                                        <th className="px-4 py-5">Category</th>
+                                                        <th className="px-4 py-5">Period</th>
+                                                        <th className="px-8 py-5 text-center font-black">Total Hours</th>
+                                                        <th className="px-8 py-5"></th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody className="divide-y divide-slate-100">
+                                                    {stats.filtered.map(t => (
+                                                        <tr key={t.id} className="hover:bg-slate-50/50 group transition-all">
+                                                            <td className="px-8 py-5 font-bold text-slate-700">{t.description}</td>
+                                                            <td className="px-4 py-5 text-[10px] font-black uppercase text-slate-400">{t.entity}</td>
+                                                            <td className="px-4 py-5"><span className="px-2.5 py-1 rounded-full border text-[9px] font-black uppercase" style={{borderColor: COLORS_MAP[t.category], color: COLORS_MAP[t.category]}}>{t.category}</span></td>
+                                                            <td className="px-4 py-5 text-slate-400 font-medium">{t.periodName}</td>
+                                                            <td className="px-8 py-5 text-center font-black text-blue-700 bg-blue-50/20">{Number(t.totalHours).toFixed(1)}h</td>
+                                                            <td className="px-8 py-5 text-right opacity-0 group-hover:opacity-100 transition-opacity">
+                                                                <button onClick={() => deleteTask(t.id)} className="text-slate-300 hover:text-red-500"><Icon name="Trash2" size={16} /></button>
+                                                            </td>
+                                                        </tr>
+                                                    ))}
+                                                    {stats.filtered.length === 0 && (
+                                                        <tr><td colSpan="6" className="py-24 text-center text-slate-300 font-black uppercase tracking-widest text-xs">No records tracked yet</td></tr>
+                                                    )}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+                    </main>
+
+                    {isModalOpen && (
+                        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in">
+                            <div className="bg-white rounded-[2.5rem] w-full max-w-xl overflow-hidden custom-shadow">
+                                <div className="px-10 py-8 bg-slate-50 border-b flex justify-between items-center">
+                                    <h2 className="text-2xl font-black text-slate-800 tracking-tight">New Log Entry</h2>
+                                    <button onClick={() => setIsModalOpen(false)} className="p-3 hover:bg-slate-200 rounded-2xl transition-colors"><Icon name="X" /></button>
+                                </div>
+                                <form onSubmit={handleAddTask} className="p-10 space-y-6">
+                                    <div>
+                                        <label className="block text-[11px] font-black uppercase mb-2 text-slate-400 tracking-widest">Task Description</label>
+                                        <input required className="w-full px-5 py-4 rounded-2xl border-2 border-slate-100 focus:border-blue-500 outline-none font-bold" value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})} placeholder="e.g. Overseas Recruitment Review" />
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-6">
+                                        <div>
+                                            <label className="block text-[11px] font-black uppercase mb-2 text-slate-400 tracking-widest">Frequency</label>
+                                            <select className="w-full px-5 py-4 rounded-2xl border-2 border-slate-100 font-bold outline-none" value={formData.type} onChange={e => setFormData({...formData, type: e.target.value})}>
+                                                <option value="weekly">Variable (One-Off)</option>
+                                                <option value="weekly_recurring">Recurring Weekly</option>
+                                                <option value="monthly">Monthly</option>
+                                                <option value="yearly">Yearly</option>
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label className="block text-[11px] font-black uppercase mb-2 text-slate-400 tracking-widest">Category</label>
+                                            <select className="w-full px-5 py-4 rounded-2xl border-2 border-slate-100 font-bold outline-none" value={formData.category} onChange={e => setFormData({...formData, category: e.target.value})}>
+                                                {CATEGORIES.map(c => <option key={c}>{c}</option>)}
+                                            </select>
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <label className="block text-[11px] font-black uppercase mb-2 text-slate-400 tracking-widest">Entity / SBU</label>
+                                        <select className="w-full px-5 py-4 rounded-2xl border-2 border-slate-100 font-bold outline-none" value={formData.entity} onChange={e => setFormData({...formData, entity: e.target.value})}>
+                                            {ENTITIES.map(e => <option key={e}>{e}</option>)}
+                                        </select>
+                                    </div>
+                                    {['weekly', 'weekly_recurring'].includes(formData.type) ? (
+                                        <div className="grid grid-cols-5 gap-3 pt-2">
+                                            {DAYS.map(d => (
+                                                <div key={d} className="text-center">
+                                                    <input type="number" step="0.5" className="w-full text-center py-3 rounded-2xl border-2 border-slate-100 font-black text-blue-600 outline-none focus:border-blue-500" value={formData[d.toLowerCase()]} onChange={e => setFormData({...formData, [d.toLowerCase()]: e.target.value})} />
+                                                    <span className="text-[9px] font-black uppercase text-slate-400 mt-2 block">{d}</span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    ) : (
+                                        <div className="grid grid-cols-2 gap-6">
+                                            <div><label className="block text-[11px] font-black uppercase mb-2 text-slate-400 tracking-widest">Total Hours</label><input type="number" className="w-full px-5 py-4 rounded-2xl border-2 border-slate-100 font-bold" value={formData.totalHours} onChange={e => setFormData({...formData, totalHours: e.target.value})} /></div>
+                                            <div><label className="block text-[11px] font-black uppercase mb-2 text-slate-400 tracking-widest">Reference</label><input className="w-full px-5 py-4 rounded-2xl border-2 border-slate-100" placeholder="e.g. Q4, 2026" value={formData.periodName} onChange={e => setFormData({...formData, periodName: e.target.value})} /></div>
+                                        </div>
+                                    )}
+                                    <button type="submit" className="w-full py-5 bg-blue-600 text-white rounded-[1.5rem] font-black uppercase text-xs shadow-2xl shadow-blue-200 hover:bg-blue-700 transition-all transform hover:-translate-y-1">Add to Timesheet</button>
+                                </form>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        const TableComponent = ({ title, icon, tasks, type, deleteTask }) => (
+            <div className="space-y-6">
+                <div className="flex items-center gap-3 text-slate-400 font-black text-[11px] uppercase tracking-[0.2em]">
+                    <Icon name={icon} size={16} /> {title} <div className="h-[1px] flex-1 bg-slate-100 ml-4 opacity-50"></div>
+                </div>
+                <div className="overflow-x-auto rounded-[1.5rem] border border-slate-100">
+                    <table className="w-full text-left text-sm">
+                        <thead className="bg-slate-50 text-[10px] font-black uppercase text-slate-400 border-b">
+                            <tr>
+                                <th className="px-8 py-4">Task Description</th>
+                                <th className="px-4 py-4">Entity</th>
+                                <th className="px-4 py-4">Category</th>
+                                {DAYS.map(d => <th key={d} className="px-2 py-4 text-center">{d}</th>)}
+                                <th className="px-8 py-4 text-center">Weekly Sum</th>
+                                <th className="px-6 py-4"></th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-50">
+                            {tasks.map(t => (
+                                <tr key={t.id} className="hover:bg-slate-50/50 group transition-all">
+                                    <td className={`px-8 py-4 font-bold ${type === 'recurring' ? 'text-slate-400 italic font-medium' : 'text-slate-800'}`}>{t.description}</td>
+                                    <td className="px-4 py-4 text-[10px] font-black uppercase text-slate-400">{t.entity}</td>
+                                    <td className="px-4 py-4">
+                                        <span className="px-2.5 py-1 rounded-full border text-[9px] font-black uppercase" style={{color: COLORS_MAP[t.category], borderColor: COLORS_MAP[t.category]}}>{t.category}</span>
+                                    </td>
+                                    {DAYS.map(d => <td key={d} className="px-2 py-4 text-center text-slate-400 font-semibold">{t[d.toLowerCase()] || 0}</td>)}
+                                    <td className={`px-8 py-4 text-center font-black ${type === 'variable' ? 'text-blue-600 bg-blue-50/30' : 'text-slate-500'}`}>{(Number(t.mon)+Number(t.tue)+Number(t.wed)+Number(t.thu)+Number(t.fri)).toFixed(1)}h</td>
+                                    <td className="px-6 py-4 text-right opacity-0 group-hover:opacity-100 transition-opacity">
+                                        <button onClick={() => deleteTask(t.id)} className="p-2 hover:text-red-500 text-slate-300"><Icon name="Trash2" size={16}/></button>
+                                    </td>
+                                </tr>
+                            ))}
+                            {tasks.length === 0 && (
+                                <tr><td colSpan="12" className="py-16 text-center text-slate-300 font-bold uppercase tracking-widest text-[10px]">No entries found</td></tr>
+                            )}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        );
+
+        const DelegationBox = ({ label, hours, color }) => {
+            const colors = { orange: 'bg-orange-500', emerald: 'bg-emerald-500', slate: 'bg-slate-500' };
+            return (
+                <div className="flex items-center justify-between p-5 bg-slate-50 rounded-[1.5rem] group hover:bg-white border border-transparent hover:border-slate-200 transition-all duration-300">
+                    <div className="flex items-center gap-4">
+                        <div className={`w-1.5 h-10 rounded-full ${colors[color]}`}></div>
+                        <span className="text-[11px] font-black text-slate-500 uppercase tracking-wider">{label}</span>
+                    </div>
+                    <div className="text-right">
+                        <span className="text-lg font-black text-slate-900 block">{Number(hours).toFixed(1)}h</span>
+                        <span className="text-[9px] font-bold text-slate-400 uppercase">Avg / Week</span>
+                    </div>
+                </div>
+            );
+        };
+
+        const IndicatorCard = ({ title, value, icon, desc, color }) => {
+            const colors = { 
+                blue: 'bg-blue-50 text-blue-600', 
+                orange: 'bg-orange-50 text-orange-600', 
+                emerald: 'bg-emerald-50 text-emerald-600', 
+                slate: 'bg-slate-50 text-slate-600' 
+            };
+            return (
+                <div className="bg-white p-7 rounded-[2rem] border border-slate-200 custom-shadow relative overflow-hidden group">
+                    <div className={`absolute -right-2 -top-2 w-20 h-20 rounded-full opacity-5 ${colors[color]}`}></div>
+                    <div className="flex items-center gap-3 mb-5">
+                        <div className={`p-3 rounded-2xl ${colors[color]} border border-white shadow-sm`}><Icon name={icon} size={20}/></div>
+                        <span className="text-[11px] font-black uppercase text-slate-400 tracking-[0.1em]">{title}</span>
+                    </div>
+                    <div className="text-4xl font-black text-slate-900 tracking-tighter leading-none mb-2">{value}</div>
+                    <div className="text-[11px] font-extrabold uppercase text-slate-400">{desc}</div>
+                </div>
+            );
+        };
+
+        const StatCard = ({ title, value, icon, subtitle }) => (
+            <div className="bg-white p-8 rounded-[2rem] border border-slate-200 custom-shadow">
+                <div className="flex items-center gap-3 mb-5 text-slate-400"><Icon name={icon} size={16} /><span className="text-[11px] font-black uppercase tracking-widest">{title}</span></div>
+                <div className="text-4xl font-black text-slate-900 tracking-tight leading-none mb-2">{value}</div>
+                <div className="text-xs text-slate-500 font-bold uppercase tracking-tight">{subtitle}</div>
+            </div>
+        );
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
