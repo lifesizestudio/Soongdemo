@@ -95,31 +95,7 @@
         const CATEGORIES = Object.keys(COLORS_MAP);
         const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
         const WEEKLY_CAPACITY = 43.75;
-
-        const firebaseConfig = window.__firebase_config ? JSON.parse(window.__firebase_config) : {
-            apiKey: "", authDomain: "", projectId: "", storageBucket: "", messagingSenderId: "", appId: ""
-        };
-        const appId = window.__app_id || 'manpower-dashboard-export';
-
-        const loadFirebase = async () => {
-            const urls = [
-                "https://www.gstatic.com/firebasejs/11.0.2/firebase-app-compat.js",
-                "https://www.gstatic.com/firebasejs/11.0.2/firebase-auth-compat.js",
-                "https://www.gstatic.com/firebasejs/11.0.2/firebase-firestore-compat.js"
-            ];
-            
-            for (const url of urls) {
-                await new Promise((resolve, reject) => {
-                    const s = document.createElement('script');
-                    s.src = url;
-                    s.async = false;
-                    s.onload = resolve;
-                    s.onerror = reject;
-                    document.head.appendChild(s);
-                });
-            }
-            return window.firebase;
-        };
+        const STORAGE_KEY = 'soong_dashboard_local_data_v2';
 
         const App = () => {
             const { 
@@ -128,72 +104,76 @@
             } = window.Recharts || {};
 
             const [tasks, setTasks] = useState([]);
-            const [user, setUser] = useState(null);
             const [activeTab, setActiveTab] = useState('summary');
             const [isModalOpen, setIsModalOpen] = useState(false);
             const [saveStatus, setSaveStatus] = useState('idle');
-            const [db, setDb] = useState(null);
+            const fileInputRef = useRef(null);
 
-            const [orgData, setOrgData] = useState({ totalEmployees: 45, totalManagers: 6 });
             const [formData, setFormData] = useState({
                 description: '', entity: 'CEG', category: 'Core Work',
                 mon: 0, tue: 0, wed: 0, thu: 0, fri: 0,
                 totalHours: 0, periodName: '', type: 'weekly'
             });
 
+            // LOAD DATA - Pre-filled with demo data for each section
             useEffect(() => {
-                loadFirebase().then(firebase => {
-                    if (!firebase) return;
-                    
-                    firebase.initializeApp(firebaseConfig);
-                    const firestore = firebase.firestore();
-                    const auth = firebase.auth();
-                    setDb(firestore);
-
-                    const initAuth = async () => {
-                        try {
-                            if (window.__initial_auth_token) {
-                                await auth.signInWithCustomToken(window.__initial_auth_token);
-                            } else {
-                                await auth.signInAnonymously();
-                            }
-                        } catch (e) { 
-                            console.warn("Auth initialization failed.", e); 
-                        }
-                    };
-                    initAuth();
-                    auth.onAuthStateChanged(setUser);
-                }).catch(err => console.error("Firebase load failed:", err));
+                const saved = localStorage.getItem(STORAGE_KEY);
+                if (saved) {
+                    try { setTasks(JSON.parse(saved)); } catch(e) { console.error("Parse error"); }
+                } else {
+                    const demoData = [
+                        // WEEKLY RECURRING
+                        { id: 'w1', type: 'weekly_recurring', description: 'Daily HR Operations & Case Handling', entity: 'CEG', category: 'Core Work', mon: 2, tue: 2, wed: 2, thu: 2, fri: 2 },
+                        { id: 'w2', type: 'weekly_recurring', description: 'Employee Query Management', entity: 'KLC', category: 'Administrative', mon: 1, tue: 1, wed: 1, thu: 1, fri: 1 },
+                        { id: 'w3', type: 'weekly_recurring', description: 'Weekly SBU HR Sync', entity: 'KT', category: 'Meetings', mon: 1.5, tue: 0, wed: 0, thu: 0, fri: 0 },
+                        
+                        // WEEKLY VARIABLE
+                        { id: 'v1', type: 'weekly', description: 'Urgent IR Case Investigation', entity: 'Overseas', category: 'Core Work', mon: 3, tue: 0, wed: 0, thu: 0, fri: 0, periodName: 'Week 4' },
+                        { id: 'v2', type: 'weekly', description: 'Policy Manual Update (Drafting)', entity: 'CEG', category: 'Core Work', mon: 0, tue: 2, wed: 1, thu: 0, fri: 0, periodName: 'Week 4' },
+                        
+                        // MONTHLY
+                        { id: 'm1', type: 'monthly', description: 'Payroll Verification & Finalization', entity: 'CEG', category: 'Core Work', totalHours: 16, periodName: 'Monthly' },
+                        { id: 'm2', type: 'monthly', description: 'Monthly Manpower Reporting', entity: 'TGI', category: 'Administrative', totalHours: 4, periodName: 'Monthly' },
+                        { id: 'm3', type: 'monthly', description: 'Strategic Talent Review', entity: 'ELFA', category: 'Core Work', totalHours: 6, periodName: 'Monthly' },
+                        
+                        // YEARLY
+                        { id: 'y1', type: 'yearly', description: 'Annual Performance Review Exercise', entity: 'CEG', category: 'Core Work', totalHours: 40, periodName: '2026' },
+                        { id: 'y2', type: 'yearly', description: 'Annual Training Needs Analysis', entity: 'Overseas', category: 'Core Work', totalHours: 15, periodName: '2026' },
+                        { id: 'y3', type: 'yearly', description: 'Year-End Compliance Audit', entity: 'NS', category: 'Administrative', totalHours: 20, periodName: '2026' }
+                    ];
+                    setTasks(demoData);
+                }
             }, []);
 
+            // AUTO-SAVE
             useEffect(() => {
-                if (!user || !db) return;
-                const ref = db.collection('artifacts').doc(appId).collection('users').doc(user.uid).collection('settings').doc('user_data');
-                return ref.onSnapshot(doc => {
-                    if (doc.exists) {
-                        const data = doc.data();
-                        if (data.tasks) setTasks(data.tasks);
-                        if (data.orgData) setOrgData(data.orgData);
-                    } else {
-                        setTasks([
-                            { id: '1', type: 'weekly_recurring', description: 'Daily HR Ops & Admin', entity: 'CEG', category: 'Administrative', mon: 1, tue: 1, wed: 1, thu: 1, fri: 1 },
-                            { id: '2', type: 'weekly_recurring', description: 'Weekly Team Sync', entity: 'CEG', category: 'Meetings', mon: 1, tue: 0, wed: 0, thu: 0, fri: 0 },
-                            { id: '3', type: 'monthly', description: 'Payroll Verification', entity: 'KLC', category: 'Core Work', totalHours: 8, periodName: 'Monthly' }
-                        ]);
-                    }
-                }, err => console.error("Snapshot error:", err));
-            }, [user, db]);
-
-            const handleCloudSave = async () => {
-                if (!user || !db) return;
-                setSaveStatus('saving');
-                try {
-                    await db.collection('artifacts').doc(appId).collection('users').doc(user.uid).collection('settings').doc('user_data').set({
-                        tasks, orgData, lastUpdated: new Date().toISOString()
-                    }, { merge: true });
+                if (tasks.length > 0) {
+                    localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks));
                     setSaveStatus('saved');
-                    setTimeout(() => setSaveStatus('idle'), 3000);
-                } catch (err) { setSaveStatus('error'); }
+                    const t = setTimeout(() => setSaveStatus('idle'), 2000);
+                    return () => clearTimeout(t);
+                }
+            }, [tasks]);
+
+            const exportBackup = () => {
+                const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(tasks));
+                const dlAnchor = document.createElement('a');
+                dlAnchor.setAttribute("href", dataStr);
+                dlAnchor.setAttribute("download", "manpower_dashboard_backup.json");
+                dlAnchor.click();
+            };
+
+            const importBackup = (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    try {
+                        const json = JSON.parse(event.target.result);
+                        setTasks(json);
+                    } catch (err) { alert("Invalid file format."); }
+                };
+                reader.readAsText(file);
             };
 
             const isCore = (category) => {
@@ -213,9 +193,7 @@
                 }));
             };
 
-            const deleteTask = (id) => {
-                setTasks(prev => prev.filter(t => t.id !== id));
-            };
+            const deleteTask = (id) => setTasks(tasks.filter(t => t.id !== id));
 
             const getTaskTotal = (t) => {
                 if (t.type === 'weekly' || t.type === 'weekly_recurring') {
@@ -227,7 +205,7 @@
             const analytics = useMemo(() => {
                 const entityStats = {};
                 const catTotals = {};
-                let totalProrated = 0, coreProrated = 0;
+                let totalProrated = 0, coreProrated = 0, monthlyProrated = 0;
 
                 ENTITIES.forEach(e => entityStats[e] = { name: e, total: 0, core: 0 });
 
@@ -237,6 +215,7 @@
                         weight = getTaskTotal(t);
                     } else if (t.type === 'monthly') {
                         weight = Number(t.totalHours || 0) / 4;
+                        monthlyProrated += weight;
                     } else if (t.type === 'yearly') {
                         weight = Number(t.totalHours || 0) / 52;
                     }
@@ -258,6 +237,7 @@
                     efficiency: totalProrated > 0 ? ((coreProrated / totalProrated) * 100).toFixed(1) : "0.0",
                     capacityLeft: Math.max(0, WEEKLY_CAPACITY - totalProrated).toFixed(1),
                     totalEffort: totalProrated.toFixed(1),
+                    monthlyShare: monthlyProrated.toFixed(1),
                     entityData: Object.values(entityStats).filter(d => d.total > 0).sort((a,b) => b.total - a.total),
                     catData: Object.entries(catTotals).map(([name, value]) => ({ name, value })),
                     health: util > 110 ? 'Critical' : util > 90 ? 'At Limit' : 'Healthy'
@@ -277,19 +257,14 @@
                     const weight = getTaskTotal(t);
                     totalVal += weight;
                     if (isCore(t.category)) coreVal += weight;
-                    
-                    if (weight > 0) {
-                        activeEntities.add(t.entity);
-                    }
+                    if (weight > 0) activeEntities.add(t.entity);
                 });
 
                 return { 
                     total: totalVal.toFixed(1), 
                     efficiency: totalVal > 0 ? ((coreVal/totalVal)*100).toFixed(1) : "0.0", 
                     activeSBUsCount: activeEntities.size,
-                    adhoc, 
-                    recurring, 
-                    filtered 
+                    adhoc, recurring, filtered 
                 };
             }, [tasks, activeTab]);
 
@@ -300,31 +275,43 @@
                 setFormData({ ...formData, description: '', mon: 0, tue: 0, wed: 0, thu: 0, fri: 0, totalHours: 0 });
             };
 
-            if (!BarChart) return <div className="h-screen flex items-center justify-center font-bold text-slate-400">Connecting to Dashboard Services...</div>;
+            if (!BarChart) return <div className="h-screen flex items-center justify-center font-bold text-slate-400 tracking-widest uppercase text-xs">Initializing Dashboard...</div>;
 
             return (
                 <div className="min-h-screen p-4 md:p-8 animate-in">
                     <header className="max-w-7xl mx-auto mb-10 flex flex-col md:flex-row md:items-end justify-between gap-6">
                         <div>
                             <div className="flex items-center gap-2 text-blue-600 font-bold text-sm uppercase tracking-widest mb-2">
-                                <Icon name="Activity" size={16} /> Manpower Analytics
+                                <Icon name="Activity" size={16} /> HR Performance Analytics
                             </div>
                             <h1 className="text-4xl font-black text-slate-900 tracking-tight leading-none">Soong Wang Seng</h1>
-                            <p className="text-slate-500 font-medium mt-2">HR Performance & Resource Allocation Dashboard</p>
+                            <p className="text-slate-500 font-medium mt-2">Browser Storage Sync: Active</p>
                         </div>
                         
                         <div className="flex flex-wrap items-center gap-3">
                             <div className="flex bg-white p-1 rounded-2xl border border-slate-200 custom-shadow">
                                 {['weekly', 'monthly', 'yearly', 'summary'].map(tab => (
-                                    <button key={tab} onClick={() => setActiveTab(tab)} className={`px-5 py-2.5 rounded-xl text-xs font-extrabold transition-all capitalize ${activeTab === tab ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:text-slate-600'}`}>
-                                        {tab === 'summary' ? 'Analysis' : tab}
+                                    <button key={tab} onClick={() => setActiveTab(tab)} className={`px-5 py-2.5 rounded-xl text-xs font-extrabold transition-all capitalize ${activeTab === tab ? 'bg-blue-600 text-white shadow-lg shadow-blue-100' : 'text-slate-400 hover:text-slate-600'}`}>
+                                        {tab === 'summary' ? 'Insights' : tab}
                                     </button>
                                 ))}
                             </div>
-                            <button onClick={handleCloudSave} disabled={saveStatus === 'saving'} className={`flex items-center gap-2 px-5 py-2.5 rounded-xl font-bold transition-all border ${saveStatus === 'saving' ? 'bg-slate-100 text-slate-400' : 'bg-white text-slate-700 shadow-sm hover:bg-slate-50'}`}>
-                                <Icon name={saveStatus === 'saving' ? 'Loader2' : 'CloudUpload'} className={saveStatus === 'saving' ? 'animate-spin' : ''} />
-                                {saveStatus === 'saving' ? 'Syncing...' : 'Sync Cloud'}
-                            </button>
+                            
+                            <div className="flex gap-2">
+                                <button onClick={exportBackup} title="Export Backup" className="p-2.5 bg-white border border-slate-200 rounded-xl text-slate-600 hover:bg-slate-50 custom-shadow transition-colors">
+                                    <Icon name="Download" size={18} />
+                                </button>
+                                <button onClick={() => fileInputRef.current.click()} title="Import Backup" className="p-2.5 bg-white border border-slate-200 rounded-xl text-slate-600 hover:bg-slate-50 custom-shadow transition-colors">
+                                    <Icon name="Upload" size={18} />
+                                </button>
+                                <input type="file" ref={fileInputRef} className="hidden" accept=".json" onChange={importBackup} />
+                                
+                                <div className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-[10px] border tracking-wider uppercase ${saveStatus === 'saved' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 'bg-white text-slate-300 border-slate-100'}`}>
+                                    <Icon name={saveStatus === 'saved' ? 'CheckCircle2' : 'Cpu'} size={14} />
+                                    {saveStatus === 'saved' ? 'Saved' : 'Auto-Saving'}
+                                </div>
+                            </div>
+
                             {activeTab !== 'summary' && (
                                 <button onClick={() => setIsModalOpen(true)} className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-6 py-2.5 rounded-xl font-bold transition-all shadow-xl shadow-blue-100">
                                     <Icon name="Plus" size={18} /> New Entry
@@ -338,9 +325,9 @@
                             <div className="space-y-8 animate-in">
                                 <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
                                     <IndicatorCard title="Capacity Health" value={`${analytics.utilization}%`} icon="Gauge" desc={analytics.health} color={analytics.health === 'Healthy' ? 'emerald' : 'orange'} />
-                                    <IndicatorCard title="Focus Index" value={`${analytics.efficiency}%`} icon="Target" desc="Core Focus Ratio" color="blue" />
-                                    <IndicatorCard title="Available Runway" value={`${analytics.capacityLeft}h`} icon="Clock" desc="Hours before weekly cap" color="emerald" />
-                                    <IndicatorCard title="Weekly Allocation" value={`${analytics.totalEffort}h`} icon="Users" desc="Avg weekly effort" color="slate" />
+                                    <IndicatorCard title="Focus Index" value={`${analytics.efficiency}%`} icon="Target" desc="Core Strategic Density" color="blue" />
+                                    <IndicatorCard title="Runway" value={`${analytics.capacityLeft}h`} icon="Clock" desc="Until Weekly Cap" color="emerald" />
+                                    <IndicatorCard title="Weekly Log" value={`${analytics.totalEffort}h`} icon="Users" desc="Total Prorated Effort" color="slate" />
                                 </div>
 
                                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -360,7 +347,7 @@
                                         </div>
                                     </div>
                                     <div className="bg-white p-8 rounded-3xl border border-slate-200 custom-shadow flex flex-col">
-                                        <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-8 flex items-center gap-2"><Icon name="PieChart" size={14}/> Work breakdown</h4>
+                                        <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-8 flex items-center gap-2"><Icon name="PieChart" size={14}/> Operational Breakdown</h4>
                                         <div className="h-[260px] mb-6">
                                             <ResponsiveContainer width="100%" height="100%">
                                                 <PieChart>
@@ -384,6 +371,42 @@
                                         </div>
                                     </div>
                                 </div>
+
+                                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                                    <div className="bg-white p-8 rounded-3xl border border-slate-200 custom-shadow">
+                                        <div className="flex items-center gap-4 mb-8">
+                                            <div className="p-3 bg-red-50 text-red-600 rounded-2xl"><Icon name="ZapOff" size={20} /></div>
+                                            <div>
+                                                <h4 className="text-sm font-black text-slate-800 uppercase tracking-widest leading-none">Delegation Roadmap</h4>
+                                                <p className="text-xs text-slate-400 font-medium mt-1">Non-strategic effort identified for offloading</p>
+                                            </div>
+                                        </div>
+                                        <div className="space-y-4">
+                                            <DelegationBox label="Administrative Management" hours={analytics.catData.find(c => c.name === 'Administrative')?.value || 0} color="orange" />
+                                            <DelegationBox label="Routine SBU Meetings" hours={analytics.catData.find(c => c.name === 'Meetings')?.value || 0} color="emerald" />
+                                            <DelegationBox label="Structural Inefficiencies" hours={analytics.catData.find(c => c.name === 'Inefficiencies')?.value || 0} color="slate" />
+                                        </div>
+                                    </div>
+
+                                    <div className="bg-blue-600 p-8 rounded-3xl text-white custom-shadow relative overflow-hidden flex flex-col justify-center">
+                                        <div className="absolute -right-10 -bottom-10 opacity-10 rotate-12"><Icon name="Zap" size={280} /></div>
+                                        <div className="relative z-10">
+                                            <div className="flex items-center gap-3 mb-6">
+                                                <Icon name="Lightbulb" size={24} />
+                                                <h4 className="text-xs font-black uppercase tracking-[0.2em]">Strategic Insight</h4>
+                                            </div>
+                                            <p className="text-xl font-bold leading-relaxed mb-6">
+                                                {Number(analytics.utilization) > 100 
+                                                    ? `Capacity Alert: Your load is at ${analytics.utilization}%. Fixed monthly tasks consume ${analytics.monthlyShare}h/week. Consider re-prioritizing variable SBU projects.`
+                                                    : `Performance Healthy: You are at ${analytics.utilization}% capacity. Focus index is ${analytics.efficiency}%, maintaining high strategic density on core HR projects.`
+                                                }
+                                            </p>
+                                            <button onClick={() => setActiveTab('weekly')} className="bg-white text-blue-600 px-6 py-3 rounded-2xl font-black text-[10px] uppercase flex items-center gap-2 hover:bg-blue-50 transition-colors shadow-lg">
+                                                Manage Weekly Efforts <Icon name="ArrowRight" size={16} />
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
                         ) : (
                             <div className="space-y-8 animate-in">
@@ -392,84 +415,50 @@
                                         title={`${activeTab} Load`} 
                                         value={`${stats.total}h`} 
                                         icon="Clock" 
-                                        subtitle={activeTab === 'weekly' ? `Target Weekly Capacity: ${WEEKLY_CAPACITY}h` : `Total effort logged for ${activeTab}`} 
+                                        subtitle={activeTab === 'weekly' ? `Target Weekly Limit: ${WEEKLY_CAPACITY}h` : `Total effort for current ${activeTab} log`} 
                                     />
-                                    <StatCard title="Focus Index" value={`${stats.efficiency}%`} icon="Target" subtitle="Strategic core ratio" />
+                                    <StatCard title="Focus Index" value={`${stats.efficiency}%`} icon="Target" subtitle="Strategic to Support Ratio" />
                                     <StatCard title="Active SBUs" value={stats.activeSBUsCount} icon="Building2" subtitle="Units with assigned effort" />
                                 </div>
                                 
                                 <div className="bg-white rounded-[2.5rem] border border-slate-200 p-8 custom-shadow overflow-hidden">
                                     {activeTab === 'weekly' ? (
                                         <div className="space-y-12">
-                                            <TableComponent 
-                                                title="Recurring Base Load" 
-                                                icon="Repeat" 
-                                                tasks={stats.recurring} 
-                                                type="recurring" 
-                                                deleteTask={deleteTask} 
-                                                updateTaskField={updateTaskField}
-                                            />
-                                            <TableComponent 
-                                                title="Variable / Ad-Hoc Tasks" 
-                                                icon="CalendarDays" 
-                                                tasks={stats.adhoc} 
-                                                type="variable" 
-                                                deleteTask={deleteTask} 
-                                                updateTaskField={updateTaskField}
-                                            />
+                                            <TableComponent title="Recurring Base Load" icon="Repeat" tasks={stats.recurring} type="recurring" deleteTask={deleteTask} updateTaskField={updateTaskField} />
+                                            <TableComponent title="Ad-Hoc / Variable Projects" icon="CalendarDays" tasks={stats.adhoc} type="variable" deleteTask={deleteTask} updateTaskField={updateTaskField} />
                                         </div>
                                     ) : (
                                         <div className="overflow-x-auto rounded-2xl border border-slate-100">
                                             <table className="w-full text-left text-sm">
-                                                <thead className="bg-slate-50 text-[11px] font-black uppercase text-slate-400 border-b">
+                                                <thead className="bg-slate-50 text-[10px] font-black uppercase text-slate-400 border-b">
                                                     <tr>
-                                                        <th className="px-8 py-5">Task Description</th>
+                                                        <th className="px-8 py-5">Task / Project Description</th>
                                                         <th className="px-4 py-5">Entity</th>
                                                         <th className="px-4 py-5">Category</th>
-                                                        <th className="px-4 py-5">Period</th>
+                                                        <th className="px-4 py-5">Ref</th>
                                                         <th className="px-8 py-5 text-center font-black">Total Hours</th>
-                                                        <th className="px-8 py-5"></th>
+                                                        <th className="px-8 py-5 w-24"></th>
                                                     </tr>
                                                 </thead>
                                                 <tbody className="divide-y divide-slate-100">
                                                     {stats.filtered.map(t => (
                                                         <tr key={t.id} className="hover:bg-slate-50/50 group transition-all">
                                                             <td className="px-8 py-5 font-bold text-slate-700">
-                                                                <input 
-                                                                    type="text" 
-                                                                    className="bg-transparent border-b border-transparent focus:border-blue-400 focus:outline-none w-full editable-input transition-all p-1"
-                                                                    value={t.description}
-                                                                    onChange={(e) => updateTaskField(t.id, 'description', e.target.value)}
-                                                                />
+                                                                <input type="text" className="bg-transparent border-b border-transparent focus:border-blue-400 focus:outline-none w-full editable-input transition-all p-1" value={t.description} onChange={(e) => updateTaskField(t.id, 'description', e.target.value)} />
                                                             </td>
                                                             <td className="px-4 py-5 text-[10px] font-black uppercase text-slate-400">
-                                                                <select 
-                                                                    className="bg-transparent border-b border-transparent focus:border-blue-400 focus:outline-none w-full cursor-pointer hover:bg-slate-100 rounded transition-all"
-                                                                    value={t.entity}
-                                                                    onChange={(e) => updateTaskField(t.id, 'entity', e.target.value)}
-                                                                >
+                                                                <select className="bg-transparent border-none focus:outline-none cursor-pointer" value={t.entity} onChange={(e) => updateTaskField(t.id, 'entity', e.target.value)}>
                                                                     {ENTITIES.map(e => <option key={e} value={e}>{e}</option>)}
                                                                 </select>
                                                             </td>
                                                             <td className="px-4 py-5">
-                                                                <select 
-                                                                    className="bg-transparent border-b border-transparent focus:border-blue-400 focus:outline-none cursor-pointer text-[9px] font-black uppercase px-2 py-1 rounded-full border bg-white"
-                                                                    style={{borderColor: COLORS_MAP[t.category] || '#cbd5e1', color: COLORS_MAP[t.category] || '#64748b'}}
-                                                                    value={t.category}
-                                                                    onChange={(e) => updateTaskField(t.id, 'category', e.target.value)}
-                                                                >
+                                                                <select className="bg-transparent text-[9px] font-black uppercase px-2 py-1 rounded-full border bg-white" style={{borderColor: COLORS_MAP[t.category] || '#cbd5e1', color: COLORS_MAP[t.category] || '#64748b'}} value={t.category} onChange={(e) => updateTaskField(t.id, 'category', e.target.value)}>
                                                                     {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
                                                                 </select>
                                                             </td>
                                                             <td className="px-4 py-5 text-slate-400 font-medium">{t.periodName}</td>
                                                             <td className="px-8 py-5 text-center font-black text-blue-700 bg-blue-50/20">
-                                                                <input 
-                                                                    type="number" 
-                                                                    step="0.5" 
-                                                                    className="w-16 text-center bg-transparent border-b border-transparent focus:border-blue-400 focus:outline-none font-black text-blue-700"
-                                                                    value={t.totalHours || 0}
-                                                                    onChange={(e) => updateTaskField(t.id, 'totalHours', e.target.value)}
-                                                                />h
+                                                                <input type="number" step="0.5" className="w-16 text-center bg-transparent border-b border-transparent focus:border-blue-400 focus:outline-none font-black text-blue-700" value={t.totalHours || 0} onChange={(e) => updateTaskField(t.id, 'totalHours', e.target.value)} />h
                                                             </td>
                                                             <td className="px-8 py-5 text-right opacity-0 group-hover:opacity-100 transition-opacity">
                                                                 <button onClick={() => deleteTask(t.id)} className="text-slate-300 hover:text-red-500"><Icon name="Trash2" size={16} /></button>
@@ -477,7 +466,7 @@
                                                         </tr>
                                                     ))}
                                                     {stats.filtered.length === 0 && (
-                                                        <tr><td colSpan="6" className="py-24 text-center text-slate-300 font-black uppercase tracking-widest text-xs">No records tracked yet</td></tr>
+                                                        <tr><td colSpan="6" className="py-24 text-center text-slate-300 font-black uppercase tracking-widest text-[10px]">No records found</td></tr>
                                                     )}
                                                 </tbody>
                                             </table>
@@ -492,17 +481,16 @@
                         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in">
                             <div className="bg-white rounded-[2.5rem] w-full max-w-xl overflow-hidden custom-shadow">
                                 <div className="px-10 py-8 bg-slate-50 border-b flex justify-between items-center">
-                                    <h2 className="text-2xl font-black text-slate-800 tracking-tight">New Log Entry</h2>
+                                    <h2 className="text-2xl font-black text-slate-800 tracking-tight">Log Effort</h2>
                                     <button onClick={() => setIsModalOpen(false)} className="p-3 hover:bg-slate-200 rounded-2xl transition-colors"><Icon name="X" /></button>
                                 </div>
                                 <form onSubmit={handleAddTask} className="p-10 space-y-6">
                                     <div>
-                                        <label className="block text-[11px] font-black uppercase mb-2 text-slate-400 tracking-widest">Task Description</label>
-                                        <input required className="w-full px-5 py-4 rounded-2xl border-2 border-slate-100 focus:border-blue-500 outline-none font-bold" value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})} placeholder="e.g. Audit Preparation" />
+                                        <label className="block text-[11px] font-black uppercase mb-2 text-slate-400 tracking-widest">Description</label>
+                                        <input required className="w-full px-5 py-4 rounded-2xl border-2 border-slate-100 focus:border-blue-500 outline-none font-bold" value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})} placeholder="e.g. Audit Prep" />
                                     </div>
                                     <div className="grid grid-cols-2 gap-6">
-                                        <div>
-                                            <label className="block text-[11px] font-black uppercase mb-2 text-slate-400 tracking-widest">Frequency</label>
+                                        <div><label className="block text-[11px] font-black uppercase mb-2 text-slate-400 tracking-widest">Type</label>
                                             <select className="w-full px-5 py-4 rounded-2xl border-2 border-slate-100 font-bold outline-none" value={formData.type} onChange={e => setFormData({...formData, type: e.target.value})}>
                                                 <option value="weekly">Variable (One-Off)</option>
                                                 <option value="weekly_recurring">Recurring Weekly</option>
@@ -510,30 +498,27 @@
                                                 <option value="yearly">Yearly</option>
                                             </select>
                                         </div>
-                                        <div>
-                                            <label className="block text-[11px] font-black uppercase mb-2 text-slate-400 tracking-widest">Category</label>
+                                        <div><label className="block text-[11px] font-black uppercase mb-2 text-slate-400 tracking-widest">Category</label>
                                             <select className="w-full px-5 py-4 rounded-2xl border-2 border-slate-100 font-bold outline-none" value={formData.category} onChange={e => setFormData({...formData, category: e.target.value})}>
                                                 {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
                                             </select>
                                         </div>
                                     </div>
                                     <div className="grid grid-cols-2 gap-6">
-                                        <div>
-                                            <label className="block text-[11px] font-black uppercase mb-2 text-slate-400 tracking-widest">Entity / SBU</label>
+                                        <div><label className="block text-[11px] font-black uppercase mb-2 text-slate-400 tracking-widest">Entity</label>
                                             <select className="w-full px-5 py-4 rounded-2xl border-2 border-slate-100 font-bold outline-none" value={formData.entity} onChange={e => setFormData({...formData, entity: e.target.value})}>
                                                 {ENTITIES.map(e => <option key={e} value={e}>{e}</option>)}
                                             </select>
                                         </div>
                                         {['weekly', 'weekly_recurring'].includes(formData.type) ? (
-                                            <div>
-                                                <label className="block text-[11px] font-black uppercase mb-2 text-slate-400 tracking-widest">Mon (Initial h)</label>
+                                            <div><label className="block text-[11px] font-black uppercase mb-2 text-slate-400 tracking-widest">Initial h (Mon)</label>
                                                 <input type="number" step="0.5" className="w-full px-5 py-4 rounded-2xl border-2 border-slate-100 font-bold outline-none" value={formData.mon} onChange={e => setFormData({...formData, mon: e.target.value})} />
                                             </div>
                                         ) : (
                                             <div><label className="block text-[11px] font-black uppercase mb-2 text-slate-400 tracking-widest">Total Hours</label><input type="number" step="0.5" className="w-full px-5 py-4 rounded-2xl border-2 border-slate-100 font-bold" value={formData.totalHours} onChange={e => setFormData({...formData, totalHours: e.target.value})} /></div>
                                         )}
                                     </div>
-                                    <button type="submit" className="w-full py-5 bg-blue-600 text-white rounded-[1.5rem] font-black uppercase text-xs shadow-2xl shadow-blue-200 hover:bg-blue-700 transition-all transform hover:-translate-y-1">Add to Timesheet</button>
+                                    <button type="submit" className="w-full py-5 bg-blue-600 text-white rounded-[1.5rem] font-black uppercase text-xs shadow-2xl shadow-blue-200 hover:bg-blue-700 transition-all">Submit Entry</button>
                                 </form>
                             </div>
                         </div>
@@ -551,11 +536,11 @@
                     <table className="w-full text-left text-sm">
                         <thead className="bg-slate-50 text-[10px] font-black uppercase text-slate-400 border-b">
                             <tr>
-                                <th className="px-8 py-4">Task Description</th>
+                                <th className="px-8 py-4">Task / Project</th>
                                 <th className="px-4 py-4">Entity</th>
                                 <th className="px-4 py-4">Category</th>
                                 {DAYS.map(d => <th key={d} className="px-2 py-4 text-center">{d}</th>)}
-                                <th className="px-8 py-4 text-center">Weekly Sum</th>
+                                <th className="px-8 py-4 text-center">Sum</th>
                                 <th className="px-6 py-4"></th>
                             </tr>
                         </thead>
@@ -563,41 +548,21 @@
                             {tasks.map(t => (
                                 <tr key={t.id} className="hover:bg-slate-50/50 group transition-all">
                                     <td className={`px-8 py-4 font-bold ${type === 'recurring' ? 'text-slate-400 italic font-medium' : 'text-slate-800'}`}>
-                                        <input 
-                                            type="text" 
-                                            className="bg-transparent border-b border-transparent focus:border-blue-400 focus:outline-none w-full editable-input transition-all p-1"
-                                            value={t.description}
-                                            onChange={(e) => updateTaskField(t.id, 'description', e.target.value)}
-                                        />
+                                        <input type="text" className="bg-transparent border-b border-transparent focus:border-blue-400 focus:outline-none w-full editable-input transition-all p-1" value={t.description} onChange={(e) => updateTaskField(t.id, 'description', e.target.value)} />
                                     </td>
                                     <td className="px-4 py-4 text-[10px] font-black uppercase text-slate-400">
-                                        <select 
-                                            className="bg-transparent border-b border-transparent focus:border-blue-400 focus:outline-none w-full cursor-pointer hover:bg-slate-100 rounded transition-all"
-                                            value={t.entity}
-                                            onChange={(e) => updateTaskField(t.id, 'entity', e.target.value)}
-                                        >
+                                        <select className="bg-transparent border-none focus:outline-none cursor-pointer" value={t.entity} onChange={(e) => updateTaskField(t.id, 'entity', e.target.value)}>
                                             {ENTITIES.map(e => <option key={e} value={e}>{e}</option>)}
                                         </select>
                                     </td>
                                     <td className="px-4 py-4">
-                                        <select 
-                                            className="bg-transparent border-b border-transparent focus:border-blue-400 focus:outline-none cursor-pointer text-[9px] font-black uppercase px-2 py-1 rounded-full border bg-white"
-                                            style={{borderColor: COLORS_MAP[t.category] || '#cbd5e1', color: COLORS_MAP[t.category] || '#64748b'}}
-                                            value={t.category}
-                                            onChange={(e) => updateTaskField(t.id, 'category', e.target.value)}
-                                        >
+                                        <select className="bg-transparent text-[9px] font-black uppercase px-2 py-1 rounded-full border bg-white" style={{borderColor: COLORS_MAP[t.category] || '#cbd5e1', color: COLORS_MAP[t.category] || '#64748b'}} value={t.category} onChange={(e) => updateTaskField(t.id, 'category', e.target.value)}>
                                             {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
                                         </select>
                                     </td>
                                     {DAYS.map(d => (
                                         <td key={d} className="px-1 py-4 text-center">
-                                            <input 
-                                                type="number" 
-                                                step="0.5" 
-                                                className="w-10 text-center bg-transparent border-b border-transparent focus:border-blue-400 focus:outline-none font-semibold text-slate-600 hover:bg-slate-100 rounded transition-all"
-                                                value={t[d.toLowerCase()] || 0}
-                                                onChange={(e) => updateTaskField(t.id, d.toLowerCase(), e.target.value)}
-                                            />
+                                            <input type="number" step="0.5" className="w-10 text-center bg-transparent border-b border-transparent focus:border-blue-400 focus:outline-none font-semibold text-slate-600 hover:bg-slate-100 rounded transition-all" value={t[d.toLowerCase()] || 0} onChange={(e) => updateTaskField(t.id, d.toLowerCase(), e.target.value)} />
                                         </td>
                                     ))}
                                     <td className={`px-8 py-4 text-center font-black ${type === 'variable' ? 'text-blue-600 bg-blue-50/30' : 'text-slate-500'}`}>{(Number(t.mon || 0)+Number(t.tue || 0)+Number(t.wed || 0)+Number(t.thu || 0)+Number(t.fri || 0)).toFixed(1)}h</td>
@@ -606,9 +571,6 @@
                                     </td>
                                 </tr>
                             ))}
-                            {tasks.length === 0 && (
-                                <tr><td colSpan="12" className="py-16 text-center text-slate-300 font-bold uppercase tracking-widest text-[10px]">No entries found</td></tr>
-                            )}
                         </tbody>
                     </table>
                 </div>
@@ -623,24 +585,15 @@
                         <div className={`w-1.5 h-10 rounded-full ${colors[color]}`}></div>
                         <span className="text-[11px] font-black text-slate-500 uppercase tracking-wider">{label}</span>
                     </div>
-                    <div className="text-right">
-                        <span className="text-lg font-black text-slate-900 block">{Number(hours).toFixed(1)}h</span>
-                        <span className="text-[9px] font-bold text-slate-400 uppercase">Avg / Week</span>
-                    </div>
+                    <span className="text-lg font-black text-slate-900 block">{Number(hours).toFixed(1)}h</span>
                 </div>
             );
         };
 
         const IndicatorCard = ({ title, value, icon, desc, color }) => {
-            const colors = { 
-                blue: 'bg-blue-50 text-blue-600', 
-                orange: 'bg-orange-50 text-orange-600', 
-                emerald: 'bg-emerald-50 text-emerald-600', 
-                slate: 'bg-slate-50 text-slate-600' 
-            };
+            const colors = { blue: 'bg-blue-50 text-blue-600', orange: 'bg-orange-50 text-orange-600', emerald: 'bg-emerald-50 text-emerald-600', slate: 'bg-slate-50 text-slate-600' };
             return (
                 <div className="bg-white p-7 rounded-[2rem] border border-slate-200 custom-shadow relative overflow-hidden group">
-                    <div className={`absolute -right-2 -top-2 w-20 h-20 rounded-full opacity-5 ${colors[color]}`}></div>
                     <div className="flex items-center gap-3 mb-5">
                         <div className={`p-3 rounded-2xl ${colors[color]} border border-white shadow-sm`}><Icon name={icon} size={20}/></div>
                         <span className="text-[11px] font-black uppercase text-slate-400 tracking-[0.1em]">{title}</span>
