@@ -5,12 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Manpower & Performance Dashboard</title>
     
-    <!-- 
-      DEPLOYMENT NOTE: 
-      Ensure this file is named exactly "index.html" (lowercase).
-      Ensure you have a file named ".nojekyll" (no extension) in your root folder.
-    -->
-
     <!-- External Dependencies (CDN) -->
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -49,6 +43,26 @@
             vertical-align: middle;
             stroke-width: 2px;
         }
+
+        input[type="number"]::-webkit-inner-spin-button,
+        input[type="number"]::-webkit-outer-spin-button {
+            -webkit-appearance: none;
+            margin: 0;
+        }
+
+        .editable-input:focus {
+            background-color: #f1f5f9;
+            border-bottom-color: #3b82f6;
+        }
+
+        select {
+            appearance: none;
+            background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e");
+            background-repeat: no-repeat;
+            background-position: right 0.25rem center;
+            background-size: 0.75rem;
+            padding-right: 1.25rem;
+        }
     </style>
 </head>
 <body>
@@ -82,27 +96,29 @@
         const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
         const WEEKLY_CAPACITY = 43.75;
 
-        // Firebase Configuration (Placeholder for export)
         const firebaseConfig = window.__firebase_config ? JSON.parse(window.__firebase_config) : {
             apiKey: "", authDomain: "", projectId: "", storageBucket: "", messagingSenderId: "", appId: ""
         };
-        const appId = window.__app_id || 'manpower-dashboard-production';
+        const appId = window.__app_id || 'manpower-dashboard-export';
 
-        const loadFirebase = () => {
-            return new Promise((resolve) => {
-                const urls = [
-                    "https://www.gstatic.com/firebasejs/11.0.2/firebase-app-compat.js",
-                    "https://www.gstatic.com/firebasejs/11.0.2/firebase-auth-compat.js",
-                    "https://www.gstatic.com/firebasejs/11.0.2/firebase-firestore-compat.js"
-                ];
-                let loaded = 0;
-                urls.forEach(url => {
+        const loadFirebase = async () => {
+            const urls = [
+                "https://www.gstatic.com/firebasejs/11.0.2/firebase-app-compat.js",
+                "https://www.gstatic.com/firebasejs/11.0.2/firebase-auth-compat.js",
+                "https://www.gstatic.com/firebasejs/11.0.2/firebase-firestore-compat.js"
+            ];
+            
+            for (const url of urls) {
+                await new Promise((resolve, reject) => {
                     const s = document.createElement('script');
-                    s.src = url; s.async = true;
-                    s.onload = () => { if (++loaded === urls.length) resolve(window.firebase); };
+                    s.src = url;
+                    s.async = false;
+                    s.onload = resolve;
+                    s.onerror = reject;
                     document.head.appendChild(s);
                 });
-            });
+            }
+            return window.firebase;
         };
 
         const App = () => {
@@ -118,6 +134,7 @@
             const [saveStatus, setSaveStatus] = useState('idle');
             const [db, setDb] = useState(null);
 
+            const [orgData, setOrgData] = useState({ totalEmployees: 45, totalManagers: 6 });
             const [formData, setFormData] = useState({
                 description: '', entity: 'CEG', category: 'Core Work',
                 mon: 0, tue: 0, wed: 0, thu: 0, fri: 0,
@@ -126,10 +143,13 @@
 
             useEffect(() => {
                 loadFirebase().then(firebase => {
+                    if (!firebase) return;
+                    
                     firebase.initializeApp(firebaseConfig);
                     const firestore = firebase.firestore();
                     const auth = firebase.auth();
                     setDb(firestore);
+
                     const initAuth = async () => {
                         try {
                             if (window.__initial_auth_token) {
@@ -137,11 +157,13 @@
                             } else {
                                 await auth.signInAnonymously();
                             }
-                        } catch (e) { console.warn("Connected features disabled."); }
+                        } catch (e) { 
+                            console.warn("Auth initialization failed.", e); 
+                        }
                     };
                     initAuth();
                     auth.onAuthStateChanged(setUser);
-                });
+                }).catch(err => console.error("Firebase load failed:", err));
             }, []);
 
             useEffect(() => {
@@ -151,13 +173,15 @@
                     if (doc.exists) {
                         const data = doc.data();
                         if (data.tasks) setTasks(data.tasks);
+                        if (data.orgData) setOrgData(data.orgData);
                     } else {
                         setTasks([
-                            { id: '1', type: 'weekly_recurring', description: 'Daily HR Operations', entity: 'CEG', category: 'Core Work', mon: 0.5, tue: 0.5, wed: 0.5, thu: 0.5, fri: 0.5 },
-                            { id: '2', type: 'weekly', description: 'Director Strategy Sync', entity: 'CEG', category: 'Meetings', mon: 0, tue: 1, wed: 0, thu: 0, fri: 0 }
+                            { id: '1', type: 'weekly_recurring', description: 'Daily HR Ops & Admin', entity: 'CEG', category: 'Administrative', mon: 1, tue: 1, wed: 1, thu: 1, fri: 1 },
+                            { id: '2', type: 'weekly_recurring', description: 'Weekly Team Sync', entity: 'CEG', category: 'Meetings', mon: 1, tue: 0, wed: 0, thu: 0, fri: 0 },
+                            { id: '3', type: 'monthly', description: 'Payroll Verification', entity: 'KLC', category: 'Core Work', totalHours: 8, periodName: 'Monthly' }
                         ]);
                     }
-                });
+                }, err => console.error("Snapshot error:", err));
             }, [user, db]);
 
             const handleCloudSave = async () => {
@@ -165,17 +189,39 @@
                 setSaveStatus('saving');
                 try {
                     await db.collection('artifacts').doc(appId).collection('users').doc(user.uid).collection('settings').doc('user_data').set({
-                        tasks, lastUpdated: new Date().toISOString()
+                        tasks, orgData, lastUpdated: new Date().toISOString()
                     }, { merge: true });
                     setSaveStatus('saved');
                     setTimeout(() => setSaveStatus('idle'), 3000);
                 } catch (err) { setSaveStatus('error'); }
             };
 
-            const isCore = (cat) => {
-                if (!cat) return false;
-                const normalized = cat.toLowerCase().replace(/\s+/g, '');
+            const isCore = (category) => {
+                if (!category) return false;
+                const normalized = category.toLowerCase().replace(/[^a-z]/g, '');
                 return normalized === 'corework';
+            };
+
+            const updateTaskField = (taskId, field, value) => {
+                setTasks(prev => prev.map(t => {
+                    if (t.id === taskId) {
+                        const isNumeric = DAYS.some(d => d.toLowerCase() === field) || field === 'totalHours';
+                        const processedValue = isNumeric ? (parseFloat(value) || 0) : value;
+                        return { ...t, [field]: processedValue };
+                    }
+                    return t;
+                }));
+            };
+
+            const deleteTask = (id) => {
+                setTasks(prev => prev.filter(t => t.id !== id));
+            };
+
+            const getTaskTotal = (t) => {
+                if (t.type === 'weekly' || t.type === 'weekly_recurring') {
+                    return Number(t.mon || 0) + Number(t.tue || 0) + Number(t.wed || 0) + Number(t.thu || 0) + Number(t.fri || 0);
+                }
+                return Number(t.totalHours || 0);
             };
 
             const analytics = useMemo(() => {
@@ -188,7 +234,7 @@
                 tasks.forEach(t => {
                     let weight = 0;
                     if (t.type === 'weekly' || t.type === 'weekly_recurring') {
-                        weight = Number(t.mon || 0)+Number(t.tue || 0)+Number(t.wed || 0)+Number(t.thu || 0)+Number(t.fri || 0);
+                        weight = getTaskTotal(t);
                     } else if (t.type === 'monthly') {
                         weight = Number(t.totalHours || 0) / 4;
                     } else if (t.type === 'yearly') {
@@ -209,7 +255,7 @@
                 const util = (totalProrated / WEEKLY_CAPACITY) * 100;
                 return {
                     utilization: util.toFixed(1),
-                    efficiency: totalProrated > 0 ? ((coreProrated / totalProrated) * 100).toFixed(1) : 0,
+                    efficiency: totalProrated > 0 ? ((coreProrated / totalProrated) * 100).toFixed(1) : "0.0",
                     capacityLeft: Math.max(0, WEEKLY_CAPACITY - totalProrated).toFixed(1),
                     totalEffort: totalProrated.toFixed(1),
                     entityData: Object.values(entityStats).filter(d => d.total > 0).sort((a,b) => b.total - a.total),
@@ -224,18 +270,26 @@
                 const recurring = tasks.filter(t => t.type === 'weekly_recurring');
                 const combined = activeTab === 'weekly' ? [...adhoc, ...recurring] : filtered;
                 
-                let total = 0, core = 0;
+                let totalVal = 0, coreVal = 0;
+                const activeEntities = new Set();
+
                 combined.forEach(t => {
-                    const weight = (t.type === 'weekly' || t.type === 'weekly_recurring') 
-                        ? Number(t.mon || 0)+Number(t.tue || 0)+Number(t.wed || 0)+Number(t.thu || 0)+Number(t.fri || 0)
-                        : Number(t.totalHours || 0);
-                    total += weight;
-                    if (isCore(t.category)) core += weight;
+                    const weight = getTaskTotal(t);
+                    totalVal += weight;
+                    if (isCore(t.category)) coreVal += weight;
+                    
+                    if (weight > 0) {
+                        activeEntities.add(t.entity);
+                    }
                 });
+
                 return { 
-                    total: total.toFixed(1), 
-                    efficiency: total > 0 ? ((core / total) * 100).toFixed(1) : "0.0", 
-                    adhoc, recurring, filtered 
+                    total: totalVal.toFixed(1), 
+                    efficiency: totalVal > 0 ? ((coreVal/totalVal)*100).toFixed(1) : "0.0", 
+                    activeSBUsCount: activeEntities.size,
+                    adhoc, 
+                    recurring, 
+                    filtered 
                 };
             }, [tasks, activeTab]);
 
@@ -246,19 +300,17 @@
                 setFormData({ ...formData, description: '', mon: 0, tue: 0, wed: 0, thu: 0, fri: 0, totalHours: 0 });
             };
 
-            const deleteTask = (id) => setTasks(tasks.filter(t => t.id !== id));
-
-            if (!BarChart) return <div className="h-screen flex items-center justify-center font-bold text-slate-400 uppercase tracking-widest text-xs">Loading Dashboard...</div>;
+            if (!BarChart) return <div className="h-screen flex items-center justify-center font-bold text-slate-400">Connecting to Dashboard Services...</div>;
 
             return (
                 <div className="min-h-screen p-4 md:p-8 animate-in">
                     <header className="max-w-7xl mx-auto mb-10 flex flex-col md:flex-row md:items-end justify-between gap-6">
                         <div>
                             <div className="flex items-center gap-2 text-blue-600 font-bold text-sm uppercase tracking-widest mb-2">
-                                <Icon name="Activity" size={16} /> Manpower & Performance
+                                <Icon name="Activity" size={16} /> Manpower Analytics
                             </div>
                             <h1 className="text-4xl font-black text-slate-900 tracking-tight leading-none">Soong Wang Seng</h1>
-                            <p className="text-slate-500 font-medium mt-2">Strategic Resource Allocation Dashboard</p>
+                            <p className="text-slate-500 font-medium mt-2">HR Performance & Resource Allocation Dashboard</p>
                         </div>
                         
                         <div className="flex flex-wrap items-center gap-3">
@@ -271,7 +323,7 @@
                             </div>
                             <button onClick={handleCloudSave} disabled={saveStatus === 'saving'} className={`flex items-center gap-2 px-5 py-2.5 rounded-xl font-bold transition-all border ${saveStatus === 'saving' ? 'bg-slate-100 text-slate-400' : 'bg-white text-slate-700 shadow-sm hover:bg-slate-50'}`}>
                                 <Icon name={saveStatus === 'saving' ? 'Loader2' : 'CloudUpload'} className={saveStatus === 'saving' ? 'animate-spin' : ''} />
-                                {saveStatus === 'saving' ? 'Syncing...' : saveStatus === 'saved' ? 'Synced' : 'Cloud Save'}
+                                {saveStatus === 'saving' ? 'Syncing...' : 'Sync Cloud'}
                             </button>
                             {activeTab !== 'summary' && (
                                 <button onClick={() => setIsModalOpen(true)} className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-6 py-2.5 rounded-xl font-bold transition-all shadow-xl shadow-blue-100">
@@ -286,9 +338,9 @@
                             <div className="space-y-8 animate-in">
                                 <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
                                     <IndicatorCard title="Capacity Health" value={`${analytics.utilization}%`} icon="Gauge" desc={analytics.health} color={analytics.health === 'Healthy' ? 'emerald' : 'orange'} />
-                                    <IndicatorCard title="Strategic Density" value={`${analytics.efficiency}%`} icon="Target" desc="Core Focus Ratio" color="blue" />
-                                    <IndicatorCard title="Available Runway" value={`${analytics.capacityLeft}h`} icon="Clock" desc="Before standard cap" color="emerald" />
-                                    <IndicatorCard title="Avg Effort" value={`${analytics.totalEffort}h`} icon="Users" desc="Weekly Allocation" color="slate" />
+                                    <IndicatorCard title="Focus Index" value={`${analytics.efficiency}%`} icon="Target" desc="Core Focus Ratio" color="blue" />
+                                    <IndicatorCard title="Available Runway" value={`${analytics.capacityLeft}h`} icon="Clock" desc="Hours before weekly cap" color="emerald" />
+                                    <IndicatorCard title="Weekly Allocation" value={`${analytics.totalEffort}h`} icon="Users" desc="Avg weekly effort" color="slate" />
                                 </div>
 
                                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -301,8 +353,8 @@
                                                     <XAxis type="number" hide />
                                                     <YAxis dataKey="name" type="category" axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 11, fontWeight: 700}} width={80} />
                                                     <Tooltip cursor={{fill: '#f8fafc'}} contentStyle={{borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)'}} />
-                                                    <Bar dataKey="total" name="Total Effort (h)" fill="#e2e8f0" radius={[0, 6, 6, 0]} barSize={24} />
-                                                    <Bar dataKey="core" name="Core Effort (h)" fill="#3b82f6" radius={[0, 6, 6, 0]} barSize={24} />
+                                                    <Bar dataKey="total" name="Total (h)" fill="#e2e8f0" radius={[0, 6, 6, 0]} barSize={24} />
+                                                    <Bar dataKey="core" name="Core (h)" fill="#3b82f6" radius={[0, 6, 6, 0]} barSize={24} />
                                                 </BarChart>
                                             </ResponsiveContainer>
                                         </div>
@@ -336,15 +388,35 @@
                         ) : (
                             <div className="space-y-8 animate-in">
                                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
-                                    <StatCard title={`${activeTab} Load`} value={`${stats.total}h`} icon="Clock" subtitle={`Target Capacity: ${WEEKLY_CAPACITY}h`} />
-                                    <StatCard title="Focus index" value={`${stats.efficiency}%`} icon="Target" subtitle="Strategic core ratio" />
-                                    <StatCard title="Active SBUs" value={[...new Set(stats.filtered.map(t => t.entity))].length} icon="Building2" subtitle="Units recorded" />
+                                    <StatCard 
+                                        title={`${activeTab} Load`} 
+                                        value={`${stats.total}h`} 
+                                        icon="Clock" 
+                                        subtitle={activeTab === 'weekly' ? `Target Weekly Capacity: ${WEEKLY_CAPACITY}h` : `Total effort logged for ${activeTab}`} 
+                                    />
+                                    <StatCard title="Focus Index" value={`${stats.efficiency}%`} icon="Target" subtitle="Strategic core ratio" />
+                                    <StatCard title="Active SBUs" value={stats.activeSBUsCount} icon="Building2" subtitle="Units with assigned effort" />
                                 </div>
+                                
                                 <div className="bg-white rounded-[2.5rem] border border-slate-200 p-8 custom-shadow overflow-hidden">
                                     {activeTab === 'weekly' ? (
                                         <div className="space-y-12">
-                                            <TableComponent title="Recurring Base Load" icon="Repeat" tasks={stats.recurring} type="recurring" deleteTask={deleteTask} />
-                                            <TableComponent title="Variable / One-Off Tasks" icon="CalendarDays" tasks={stats.adhoc} type="variable" deleteTask={deleteTask} />
+                                            <TableComponent 
+                                                title="Recurring Base Load" 
+                                                icon="Repeat" 
+                                                tasks={stats.recurring} 
+                                                type="recurring" 
+                                                deleteTask={deleteTask} 
+                                                updateTaskField={updateTaskField}
+                                            />
+                                            <TableComponent 
+                                                title="Variable / Ad-Hoc Tasks" 
+                                                icon="CalendarDays" 
+                                                tasks={stats.adhoc} 
+                                                type="variable" 
+                                                deleteTask={deleteTask} 
+                                                updateTaskField={updateTaskField}
+                                            />
                                         </div>
                                     ) : (
                                         <div className="overflow-x-auto rounded-2xl border border-slate-100">
@@ -355,27 +427,57 @@
                                                         <th className="px-4 py-5">Entity</th>
                                                         <th className="px-4 py-5">Category</th>
                                                         <th className="px-4 py-5">Period</th>
-                                                        <th className="px-8 py-5 text-center font-black">Hours</th>
+                                                        <th className="px-8 py-5 text-center font-black">Total Hours</th>
                                                         <th className="px-8 py-5"></th>
                                                     </tr>
                                                 </thead>
                                                 <tbody className="divide-y divide-slate-100">
                                                     {stats.filtered.map(t => (
                                                         <tr key={t.id} className="hover:bg-slate-50/50 group transition-all">
-                                                            <td className="px-8 py-5 font-bold text-slate-700">{t.description}</td>
-                                                            <td className="px-4 py-5 text-[10px] font-black uppercase text-slate-400">{t.entity}</td>
+                                                            <td className="px-8 py-5 font-bold text-slate-700">
+                                                                <input 
+                                                                    type="text" 
+                                                                    className="bg-transparent border-b border-transparent focus:border-blue-400 focus:outline-none w-full editable-input transition-all p-1"
+                                                                    value={t.description}
+                                                                    onChange={(e) => updateTaskField(t.id, 'description', e.target.value)}
+                                                                />
+                                                            </td>
+                                                            <td className="px-4 py-5 text-[10px] font-black uppercase text-slate-400">
+                                                                <select 
+                                                                    className="bg-transparent border-b border-transparent focus:border-blue-400 focus:outline-none w-full cursor-pointer hover:bg-slate-100 rounded transition-all"
+                                                                    value={t.entity}
+                                                                    onChange={(e) => updateTaskField(t.id, 'entity', e.target.value)}
+                                                                >
+                                                                    {ENTITIES.map(e => <option key={e} value={e}>{e}</option>)}
+                                                                </select>
+                                                            </td>
                                                             <td className="px-4 py-5">
-                                                                <span className="px-2.5 py-1 rounded-full border text-[9px] font-black uppercase" style={{borderColor: COLORS_MAP[t.category] || '#cbd5e1', color: COLORS_MAP[t.category] || '#64748b'}}>{t.category}</span>
+                                                                <select 
+                                                                    className="bg-transparent border-b border-transparent focus:border-blue-400 focus:outline-none cursor-pointer text-[9px] font-black uppercase px-2 py-1 rounded-full border bg-white"
+                                                                    style={{borderColor: COLORS_MAP[t.category] || '#cbd5e1', color: COLORS_MAP[t.category] || '#64748b'}}
+                                                                    value={t.category}
+                                                                    onChange={(e) => updateTaskField(t.id, 'category', e.target.value)}
+                                                                >
+                                                                    {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                                                                </select>
                                                             </td>
                                                             <td className="px-4 py-5 text-slate-400 font-medium">{t.periodName}</td>
-                                                            <td className="px-8 py-5 text-center font-black text-blue-700 bg-blue-50/20">{Number(t.totalHours).toFixed(1)}h</td>
+                                                            <td className="px-8 py-5 text-center font-black text-blue-700 bg-blue-50/20">
+                                                                <input 
+                                                                    type="number" 
+                                                                    step="0.5" 
+                                                                    className="w-16 text-center bg-transparent border-b border-transparent focus:border-blue-400 focus:outline-none font-black text-blue-700"
+                                                                    value={t.totalHours || 0}
+                                                                    onChange={(e) => updateTaskField(t.id, 'totalHours', e.target.value)}
+                                                                />h
+                                                            </td>
                                                             <td className="px-8 py-5 text-right opacity-0 group-hover:opacity-100 transition-opacity">
-                                                                <button onClick={() => deleteTask(t.id)} className="text-slate-300 hover:text-red-500 transition-colors"><Icon name="Trash2" size={16} /></button>
+                                                                <button onClick={() => deleteTask(t.id)} className="text-slate-300 hover:text-red-500"><Icon name="Trash2" size={16} /></button>
                                                             </td>
                                                         </tr>
                                                     ))}
                                                     {stats.filtered.length === 0 && (
-                                                        <tr><td colSpan="6" className="py-24 text-center text-slate-300 font-black uppercase tracking-widest text-xs">No records available</td></tr>
+                                                        <tr><td colSpan="6" className="py-24 text-center text-slate-300 font-black uppercase tracking-widest text-xs">No records tracked yet</td></tr>
                                                     )}
                                                 </tbody>
                                             </table>
@@ -390,30 +492,48 @@
                         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in">
                             <div className="bg-white rounded-[2.5rem] w-full max-w-xl overflow-hidden custom-shadow">
                                 <div className="px-10 py-8 bg-slate-50 border-b flex justify-between items-center">
-                                    <h2 className="text-2xl font-black text-slate-800 tracking-tight">New Entry</h2>
+                                    <h2 className="text-2xl font-black text-slate-800 tracking-tight">New Log Entry</h2>
                                     <button onClick={() => setIsModalOpen(false)} className="p-3 hover:bg-slate-200 rounded-2xl transition-colors"><Icon name="X" /></button>
                                 </div>
                                 <form onSubmit={handleAddTask} className="p-10 space-y-6">
                                     <div>
-                                        <label className="block text-[11px] font-black uppercase mb-2 text-slate-400">Description</label>
-                                        <input required className="w-full px-5 py-4 rounded-2xl border-2 border-slate-100 font-bold outline-none" value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})} />
+                                        <label className="block text-[11px] font-black uppercase mb-2 text-slate-400 tracking-widest">Task Description</label>
+                                        <input required className="w-full px-5 py-4 rounded-2xl border-2 border-slate-100 focus:border-blue-500 outline-none font-bold" value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})} placeholder="e.g. Audit Preparation" />
                                     </div>
                                     <div className="grid grid-cols-2 gap-6">
-                                        <div><label className="block text-[11px] font-black uppercase mb-2 text-slate-400">Type</label>
-                                            <select className="w-full px-5 py-4 rounded-2xl border-2 border-slate-100 font-bold" value={formData.type} onChange={e => setFormData({...formData, type: e.target.value})}>
-                                                <option value="weekly">One-Off</option>
-                                                <option value="weekly_recurring">Recurring</option>
+                                        <div>
+                                            <label className="block text-[11px] font-black uppercase mb-2 text-slate-400 tracking-widest">Frequency</label>
+                                            <select className="w-full px-5 py-4 rounded-2xl border-2 border-slate-100 font-bold outline-none" value={formData.type} onChange={e => setFormData({...formData, type: e.target.value})}>
+                                                <option value="weekly">Variable (One-Off)</option>
+                                                <option value="weekly_recurring">Recurring Weekly</option>
                                                 <option value="monthly">Monthly</option>
                                                 <option value="yearly">Yearly</option>
                                             </select>
                                         </div>
-                                        <div><label className="block text-[11px] font-black uppercase mb-2 text-slate-400">Category</label>
-                                            <select className="w-full px-5 py-4 rounded-2xl border-2 border-slate-100 font-bold" value={formData.category} onChange={e => setFormData({...formData, category: e.target.value})}>
-                                                {CATEGORIES.map(c => <option key={c}>{c}</option>)}
+                                        <div>
+                                            <label className="block text-[11px] font-black uppercase mb-2 text-slate-400 tracking-widest">Category</label>
+                                            <select className="w-full px-5 py-4 rounded-2xl border-2 border-slate-100 font-bold outline-none" value={formData.category} onChange={e => setFormData({...formData, category: e.target.value})}>
+                                                {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
                                             </select>
                                         </div>
                                     </div>
-                                    <button type="submit" className="w-full py-5 bg-blue-600 text-white rounded-[1.5rem] font-black uppercase text-xs shadow-2xl shadow-blue-200">Submit Log</button>
+                                    <div className="grid grid-cols-2 gap-6">
+                                        <div>
+                                            <label className="block text-[11px] font-black uppercase mb-2 text-slate-400 tracking-widest">Entity / SBU</label>
+                                            <select className="w-full px-5 py-4 rounded-2xl border-2 border-slate-100 font-bold outline-none" value={formData.entity} onChange={e => setFormData({...formData, entity: e.target.value})}>
+                                                {ENTITIES.map(e => <option key={e} value={e}>{e}</option>)}
+                                            </select>
+                                        </div>
+                                        {['weekly', 'weekly_recurring'].includes(formData.type) ? (
+                                            <div>
+                                                <label className="block text-[11px] font-black uppercase mb-2 text-slate-400 tracking-widest">Mon (Initial h)</label>
+                                                <input type="number" step="0.5" className="w-full px-5 py-4 rounded-2xl border-2 border-slate-100 font-bold outline-none" value={formData.mon} onChange={e => setFormData({...formData, mon: e.target.value})} />
+                                            </div>
+                                        ) : (
+                                            <div><label className="block text-[11px] font-black uppercase mb-2 text-slate-400 tracking-widest">Total Hours</label><input type="number" step="0.5" className="w-full px-5 py-4 rounded-2xl border-2 border-slate-100 font-bold" value={formData.totalHours} onChange={e => setFormData({...formData, totalHours: e.target.value})} /></div>
+                                        )}
+                                    </div>
+                                    <button type="submit" className="w-full py-5 bg-blue-600 text-white rounded-[1.5rem] font-black uppercase text-xs shadow-2xl shadow-blue-200 hover:bg-blue-700 transition-all transform hover:-translate-y-1">Add to Timesheet</button>
                                 </form>
                             </div>
                         </div>
@@ -422,31 +542,73 @@
             );
         };
 
-        const TableComponent = ({ title, icon, tasks, type, deleteTask }) => (
+        const TableComponent = ({ title, icon, tasks, type, deleteTask, updateTaskField }) => (
             <div className="space-y-6">
-                <div className="flex items-center gap-3 text-slate-400 font-black text-[11px] uppercase tracking-widest">
+                <div className="flex items-center gap-3 text-slate-400 font-black text-[11px] uppercase tracking-[0.2em]">
                     <Icon name={icon} size={16} /> {title} <div className="h-[1px] flex-1 bg-slate-100 ml-4 opacity-50"></div>
                 </div>
                 <div className="overflow-x-auto rounded-[1.5rem] border border-slate-100">
                     <table className="w-full text-left text-sm">
                         <thead className="bg-slate-50 text-[10px] font-black uppercase text-slate-400 border-b">
                             <tr>
-                                <th className="px-8 py-4">Task</th><th className="px-4 py-4">Entity</th><th className="px-4 py-4">Category</th>
+                                <th className="px-8 py-4">Task Description</th>
+                                <th className="px-4 py-4">Entity</th>
+                                <th className="px-4 py-4">Category</th>
                                 {DAYS.map(d => <th key={d} className="px-2 py-4 text-center">{d}</th>)}
-                                <th className="px-8 py-4 text-center">Sum</th><th className="px-6 py-4"></th>
+                                <th className="px-8 py-4 text-center">Weekly Sum</th>
+                                <th className="px-6 py-4"></th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-50">
                             {tasks.map(t => (
                                 <tr key={t.id} className="hover:bg-slate-50/50 group transition-all">
-                                    <td className={`px-8 py-4 font-bold ${type === 'recurring' ? 'text-slate-400 italic' : 'text-slate-800'}`}>{t.description}</td>
-                                    <td className="px-4 py-4 text-[10px] font-black uppercase text-slate-400">{t.entity}</td>
-                                    <td className="px-4 py-4"><span className="px-2 py-0.5 rounded-full border text-[9px] font-bold uppercase" style={{color: COLORS_MAP[t.category] || '#64748b', borderColor: COLORS_MAP[t.category] || '#cbd5e1'}}>{t.category}</span></td>
-                                    {DAYS.map(d => <td key={d} className="px-2 py-4 text-center text-slate-400 font-semibold">{t[d.toLowerCase()] || 0}</td>)}
+                                    <td className={`px-8 py-4 font-bold ${type === 'recurring' ? 'text-slate-400 italic font-medium' : 'text-slate-800'}`}>
+                                        <input 
+                                            type="text" 
+                                            className="bg-transparent border-b border-transparent focus:border-blue-400 focus:outline-none w-full editable-input transition-all p-1"
+                                            value={t.description}
+                                            onChange={(e) => updateTaskField(t.id, 'description', e.target.value)}
+                                        />
+                                    </td>
+                                    <td className="px-4 py-4 text-[10px] font-black uppercase text-slate-400">
+                                        <select 
+                                            className="bg-transparent border-b border-transparent focus:border-blue-400 focus:outline-none w-full cursor-pointer hover:bg-slate-100 rounded transition-all"
+                                            value={t.entity}
+                                            onChange={(e) => updateTaskField(t.id, 'entity', e.target.value)}
+                                        >
+                                            {ENTITIES.map(e => <option key={e} value={e}>{e}</option>)}
+                                        </select>
+                                    </td>
+                                    <td className="px-4 py-4">
+                                        <select 
+                                            className="bg-transparent border-b border-transparent focus:border-blue-400 focus:outline-none cursor-pointer text-[9px] font-black uppercase px-2 py-1 rounded-full border bg-white"
+                                            style={{borderColor: COLORS_MAP[t.category] || '#cbd5e1', color: COLORS_MAP[t.category] || '#64748b'}}
+                                            value={t.category}
+                                            onChange={(e) => updateTaskField(t.id, 'category', e.target.value)}
+                                        >
+                                            {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                                        </select>
+                                    </td>
+                                    {DAYS.map(d => (
+                                        <td key={d} className="px-1 py-4 text-center">
+                                            <input 
+                                                type="number" 
+                                                step="0.5" 
+                                                className="w-10 text-center bg-transparent border-b border-transparent focus:border-blue-400 focus:outline-none font-semibold text-slate-600 hover:bg-slate-100 rounded transition-all"
+                                                value={t[d.toLowerCase()] || 0}
+                                                onChange={(e) => updateTaskField(t.id, d.toLowerCase(), e.target.value)}
+                                            />
+                                        </td>
+                                    ))}
                                     <td className={`px-8 py-4 text-center font-black ${type === 'variable' ? 'text-blue-600 bg-blue-50/30' : 'text-slate-500'}`}>{(Number(t.mon || 0)+Number(t.tue || 0)+Number(t.wed || 0)+Number(t.thu || 0)+Number(t.fri || 0)).toFixed(1)}h</td>
-                                    <td className="px-6 py-4 text-right opacity-0 group-hover:opacity-100 transition-opacity"><button onClick={() => deleteTask(t.id)} className="p-2 hover:text-red-500 text-slate-300"><Icon name="Trash2" size={16}/></button></td>
+                                    <td className="px-6 py-4 text-right opacity-0 group-hover:opacity-100 transition-opacity">
+                                        <button onClick={() => deleteTask(t.id)} className="p-2 hover:text-red-500 text-slate-300 transition-colors"><Icon name="Trash2" size={16}/></button>
+                                    </td>
                                 </tr>
                             ))}
+                            {tasks.length === 0 && (
+                                <tr><td colSpan="12" className="py-16 text-center text-slate-300 font-bold uppercase tracking-widest text-[10px]">No entries found</td></tr>
+                            )}
                         </tbody>
                     </table>
                 </div>
@@ -456,23 +618,32 @@
         const DelegationBox = ({ label, hours, color }) => {
             const colors = { orange: 'bg-orange-500', emerald: 'bg-emerald-500', slate: 'bg-slate-500' };
             return (
-                <div className="flex items-center justify-between p-5 bg-slate-50 rounded-[1.5rem] group hover:bg-white border border-transparent hover:border-slate-200 transition-all">
+                <div className="flex items-center justify-between p-5 bg-slate-50 rounded-[1.5rem] group hover:bg-white border border-transparent hover:border-slate-200 transition-all duration-300">
                     <div className="flex items-center gap-4">
                         <div className={`w-1.5 h-10 rounded-full ${colors[color]}`}></div>
                         <span className="text-[11px] font-black text-slate-500 uppercase tracking-wider">{label}</span>
                     </div>
-                    <span className="text-lg font-black text-slate-900">{Number(hours).toFixed(1)}h</span>
+                    <div className="text-right">
+                        <span className="text-lg font-black text-slate-900 block">{Number(hours).toFixed(1)}h</span>
+                        <span className="text-[9px] font-bold text-slate-400 uppercase">Avg / Week</span>
+                    </div>
                 </div>
             );
         };
 
         const IndicatorCard = ({ title, value, icon, desc, color }) => {
-            const colors = { blue: 'bg-blue-50 text-blue-600', orange: 'bg-orange-50 text-orange-600', emerald: 'bg-emerald-50 text-emerald-600', slate: 'bg-slate-50 text-slate-600' };
+            const colors = { 
+                blue: 'bg-blue-50 text-blue-600', 
+                orange: 'bg-orange-50 text-orange-600', 
+                emerald: 'bg-emerald-50 text-emerald-600', 
+                slate: 'bg-slate-50 text-slate-600' 
+            };
             return (
                 <div className="bg-white p-7 rounded-[2rem] border border-slate-200 custom-shadow relative overflow-hidden group">
+                    <div className={`absolute -right-2 -top-2 w-20 h-20 rounded-full opacity-5 ${colors[color]}`}></div>
                     <div className="flex items-center gap-3 mb-5">
                         <div className={`p-3 rounded-2xl ${colors[color]} border border-white shadow-sm`}><Icon name={icon} size={20}/></div>
-                        <span className="text-[11px] font-black uppercase text-slate-400 tracking-widest">{title}</span>
+                        <span className="text-[11px] font-black uppercase text-slate-400 tracking-[0.1em]">{title}</span>
                     </div>
                     <div className="text-4xl font-black text-slate-900 tracking-tighter leading-none mb-2">{value}</div>
                     <div className="text-[11px] font-extrabold uppercase text-slate-400">{desc}</div>
@@ -483,8 +654,8 @@
         const StatCard = ({ title, value, icon, subtitle }) => (
             <div className="bg-white p-8 rounded-[2rem] border border-slate-200 custom-shadow">
                 <div className="flex items-center gap-3 mb-5 text-slate-400"><Icon name={icon} size={16} /><span className="text-[11px] font-black uppercase tracking-widest">{title}</span></div>
-                <div className="text-4xl font-black text-slate-900 leading-none mb-2">{value}</div>
-                <div className="text-xs text-slate-500 font-bold uppercase">{subtitle}</div>
+                <div className="text-4xl font-black text-slate-900 tracking-tight leading-none mb-2">{value}</div>
+                <div className="text-xs text-slate-500 font-bold uppercase tracking-tight">{subtitle}</div>
             </div>
         );
 
